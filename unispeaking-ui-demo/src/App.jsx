@@ -40,6 +40,22 @@ import {
   Waveform,
   X,
 } from "@phosphor-icons/react";
+import {
+  AudioLines,
+  CalendarCheck2,
+  ChevronLeft,
+  ChevronRight,
+  Compass,
+  Footprints,
+  Headphones as LucideHeadphones,
+  Languages,
+  MessageCircleMore,
+  MessagesSquare,
+  PackageCheck,
+  Sparkles,
+  Target,
+  Trophy,
+} from "lucide-react";
 import { assetRecords, learningItems, levels, plans, recommendations, teachers } from "./data.js";
 import { createRealtimeClient } from "./realtimeClient.js";
 
@@ -126,6 +142,29 @@ function CallControls({ paused, onToggleMicrophone, onEnd, disabled = false, sub
       <button className={cx("round-control", paused && "is-on")} aria-label={paused ? "恢复会话" : "暂停会话"} disabled={disabled} onClick={onToggleMicrophone}>{paused ? <MicrophoneSlash /> : <Microphone />}</button>
       {showSubtitles && <button className={cx("round-control", subtitles && "is-on")} aria-label={subtitles ? "关闭字幕" : "打开字幕"} onClick={onToggleSubtitles}><Subtitles /></button>}
       <button className="round-control round-control--end" aria-label="结束当前会话" disabled={disabled} onClick={onEnd}><PhoneDisconnect weight="fill" /></button>
+    </div>
+  );
+}
+
+const transcriptTranslationLookup = {
+  "Hey there, I'm Clara. So good to meet you. How's your day going so far?": "嗨，我是 Clara。很高兴认识你，今天过得怎么样？",
+  "Hi! What can I get started for you today?": "你好！今天想先来点什么？",
+  "Could you recommend something less sweet?": "你能推荐一些不太甜的吗？",
+  "Sure — how about a medium oat milk latte?": "当然，中杯燕麦奶拿铁怎么样？",
+  "That sounds great. I’ll have that, thank you.": "听起来不错，我就要这个，谢谢。",
+};
+
+const resolveTranscriptTranslation = (line) => line.zh || transcriptTranslationLookup[line.en?.trim()] || "本句中文翻译暂未生成。";
+
+function CallTranscript({ lines, translated, onToggleTranslation, transcriptRef, onScroll, className, emptyStatus }) {
+  return (
+    <div ref={transcriptRef} className={cx("transcript", className)} onScroll={onScroll} tabIndex="0" aria-label="对话字幕，可滚动查看历史内容">
+      {lines.length === 0
+        ? <article className="transcript__line"><small>字幕</small><p>{emptyStatus}</p></article>
+        : lines.map((line, index) => {
+          const isTranslated = translated.includes(index);
+          return <article key={line.id || index} className={cx("transcript__line", line.who === "你" && "is-user")}><small>{line.who}</small><p>{line.en}</p><button type="button" aria-label={`${isTranslated ? "收起" : "查看"}${line.who}这句字幕的翻译`} onClick={() => onToggleTranslation(index)}><Translate />{isTranslated ? "收起翻译" : "翻译"}</button>{isTranslated && <span>{resolveTranscriptTranslation(line)}</span>}</article>;
+        })}
     </div>
   );
 }
@@ -416,19 +455,45 @@ function LevelSelect({ value, onChange }) {
   );
 }
 
+const speedOptions = ["慢一些", "适中", "自然", "快一些"];
+
+function SpeedSelector({ value, onChange, className }) {
+  const speedIndex = Math.max(0, speedOptions.indexOf(value));
+  return (
+    <div className={cx("conversation-settings__segment", className)} style={{ "--speed-index": speedIndex }}>
+      <span className="conversation-settings__segment-indicator" aria-hidden="true" />
+      {speedOptions.map((item) => (
+        <button key={item} type="button" className={value === item ? "is-active" : ""} onClick={() => onChange(item)}>{item}</button>
+      ))}
+    </div>
+  );
+}
+
+function TeacherSelector({ selectedId, onSelect, className }) {
+  return (
+    <div className={cx("conversation-settings__teachers", className)}>
+      {teachers.map((item) => (
+        <button key={item.id} type="button" className={selectedId === item.id ? "is-active" : ""} onClick={() => onSelect(item)}>
+          <img src={item.image} alt="" />
+          <span><strong>{item.name}</strong><small>{item.accent} · {item.personality}</small></span>
+          <Headphones aria-hidden="true" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ConversationSettings({ speed, level, teacher, onSave, onClose }) {
   const [draftSpeed, setDraftSpeed] = useState(speed);
   const [draftLevel, setDraftLevel] = useState(level || "basic");
   const [draftTeacherId, setDraftTeacherId] = useState(teacher.id);
-  const speedOptions = ["慢一些", "适中", "自然", "快一些"];
-  const speedIndex = Math.max(0, speedOptions.indexOf(draftSpeed));
   return (
     <section className="conversation-settings" role="dialog" aria-modal="false" aria-labelledby="conversation-settings-title">
       <button className="conversation-settings__close" aria-label="关闭对话设置" onClick={onClose}><X /></button>
       <div className="conversation-settings__heading"><h2 id="conversation-settings-title">对话设置</h2><p>调整后会从下一次对话开始生效。</p></div>
-      <div className="conversation-settings__group"><label>对话语速</label><div className="conversation-settings__segment" style={{ "--speed-index": speedIndex }}><span className="conversation-settings__segment-indicator" aria-hidden="true" />{speedOptions.map((item) => <button key={item} className={draftSpeed === item ? "is-active" : ""} onClick={() => setDraftSpeed(item)}>{item}</button>)}</div></div>
+      <div className="conversation-settings__group"><label>对话语速</label><SpeedSelector value={draftSpeed} onChange={setDraftSpeed} /></div>
       <div className="conversation-settings__group"><label htmlFor="conversation-level">英语水平</label><LevelSelect value={draftLevel} onChange={setDraftLevel} /></div>
-      <div className="conversation-settings__group"><label>AI 老师</label><div className="conversation-settings__teachers">{teachers.map((item) => <button key={item.id} className={draftTeacherId === item.id ? "is-active" : ""} onClick={() => setDraftTeacherId(item.id)}><img src={item.image} alt="" /><span><strong>{item.name}</strong><small>{item.accent}</small></span></button>)}</div></div>
+      <div className="conversation-settings__group"><label>AI 老师</label><TeacherSelector selectedId={draftTeacherId} onSelect={(item) => setDraftTeacherId(item.id)} /></div>
       <div className="conversation-settings__actions"><button onClick={onClose}>取消</button><button className="is-primary" onClick={() => onSave({ speed: draftSpeed, level: draftLevel, teacher: teachers.find((item) => item.id === draftTeacherId) })}>保存设置</button></div>
     </section>
   );
@@ -679,7 +744,7 @@ function Conversation({ teacher, speed, level, onSettingsChange }) {
             {!subtitles && <span>{callStatus}</span>}
           </div>
         </div>
-        {subtitles && <div ref={transcriptRef} className="transcript" onScroll={handleTranscriptScroll} tabIndex="0" aria-label="对话字幕，可滚动查看历史内容">{lines.length === 0 ? <article className="transcript__line"><small>字幕</small><p>{callStatus}</p></article> : lines.map((line, index) => <article key={line.id || index} className={cx("transcript__line", line.who === "你" && "is-user")}><small>{line.who}</small><p>{line.en}</p>{line.zh && <button onClick={() => toggleTranslation(index)}><Translate />{translated.includes(index) ? "收起翻译" : "翻译"}</button>}{translated.includes(index) && <span>{line.zh}</span>}</article>)}</div>}
+        {subtitles && <CallTranscript lines={lines} translated={translated} onToggleTranslation={toggleTranslation} transcriptRef={transcriptRef} onScroll={handleTranscriptScroll} emptyStatus={callStatus} />}
         {callError && <p className="call-error">{callError}</p>}
       </section>
       <CallControls paused={paused} onToggleMicrophone={togglePaused} onEnd={stopConversation} disabled={callState === "ended"} subtitles={subtitles} onToggleSubtitles={() => setSubtitles(!subtitles)} />
@@ -844,7 +909,7 @@ function ResultModal({ completed, onBack, onAssets }) {
         <div className="result-radar"><RadarChart metrics={metrics} /></div>
         <ul className="result-metrics">{metrics.map((metric) => <li key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong></li>)}</ul>
       </section>
-      <div className="result-modal__actions"><ExpandingCta direction="back" className="result-action result-action--light" onClick={onBack}>返回场景广场</ExpandingCta><ExpandingCta className="result-action result-action--dark" onClick={onAssets}>查看学习资产</ExpandingCta></div>
+      <div className="result-modal__actions"><ExpandingCta direction="back" className="result-action result-action--light" onClick={onBack}>返回场景广场</ExpandingCta><ExpandingCta className="result-action result-action--dark" onClick={onAssets}>前往学习资产</ExpandingCta></div>
     </Modal>
   );
 }
@@ -870,7 +935,7 @@ function ReadScoreModal({ feedback, onClose }) {
   );
 }
 
-function Training({ sceneTitle, teacher, initialStep = "learn", result, onExit, onComplete, onBack, onAssets }) {
+function Training({ sceneTitle, teacher, initialStep = "learn", standaloneSpeak = false, result, onExit, onComplete, onBack, onAssets }) {
   const steps = [
     { id: "learn", label: "学" },
     { id: "read", label: "读" },
@@ -888,6 +953,7 @@ function Training({ sceneTitle, teacher, initialStep = "learn", result, onExit, 
   const [readFeedback, setReadFeedback] = useState(null);
   const [speakingLines, setSpeakingLines] = useState(2);
   const [simulationPaused, setSimulationPaused] = useState(false);
+  const [simulationTranslated, setSimulationTranslated] = useState([]);
   const itemIndex = step === "read" ? readIndex : learnIndex;
   const item = learningItems[itemIndex];
   const score = readScores[readIndex] ?? null;
@@ -922,48 +988,287 @@ function Training({ sceneTitle, teacher, initialStep = "learn", result, onExit, 
       setStep("speak");
     }
   };
+  const simulationTranscript = [
+    { id: "simulation-assistant-1", who: teacher.name, en: "Hi! What can I get started for you today?", zh: "你好！今天想先来点什么？" },
+    { id: "simulation-user-1", who: "你", en: "Could you recommend something less sweet?", zh: "你能推荐一些不太甜的吗？" },
+    ...(speakingLines >= 3 ? [{ id: "simulation-assistant-2", who: teacher.name, en: "Sure — how about a medium oat milk latte?", zh: "当然，中杯燕麦奶拿铁怎么样？" }] : []),
+    ...(speakingLines >= 4 ? [{ id: "simulation-user-2", who: "你", en: "That sounds great. I’ll have that, thank you.", zh: "听起来不错，我就要这个，谢谢。" }] : []),
+  ];
   return (
-    <main className="training-page">
+    <main className={cx("training-page", standaloneSpeak && "training-page--standalone")}>
       <header className="training-header"><div><strong>{sceneTitle}</strong><span>从语言到真实表达</span></div><button className="training-exit" aria-label="关闭训练" onClick={onExit}><span><X weight="bold" /></span></button></header>
-      <nav className="stepper" aria-label="练习进度">
+      {!standaloneSpeak && <nav className="stepper" aria-label="练习进度">
         <span className="stepper__track" aria-hidden="true"><span style={{ width: `${unlockedStepIndex * 50}%` }} /></span>
         {steps.map((stepItem, index) => {
           const done = completedSteps.includes(stepItem.id);
           return <button key={stepItem.id} className={cx("stepper__item", step === stepItem.id && "is-active", done && "is-done")} disabled={index > unlockedStepIndex} onClick={() => goToStep(stepItem.id)}><span className="stepper__check">{done ? <Check weight="bold" /> : index + 1}</span><span className="stepper__copy"><strong>{stepItem.label}</strong></span></button>;
         })}
-      </nav>
+      </nav>}
       {step === "learn" && <section className="training-workspace"><aside className="lesson-list"><div><span>本组语言</span><small>{learnIndex + 1} / {learningItems.length}</small></div>{learningItems.map((learningItem, index) => <button key={learningItem.en} className={cx(index === learnIndex && "is-active", learnedItems.includes(index) && "is-done")} onClick={() => setLearnIndex(index)}><small>{learningItem.type}</small><strong>{learningItem.en}</strong><span>{learnedItems.includes(index) ? <Check weight="bold" /> : index + 1}</span></button>)}</aside><article className="learn-stage"><small>{item.type}</small><h1>{item.en}</h1><div className="pronunciation"><span>/ˌrekəˈmend/</span><AudioToggle mini label={`${item.en} 的发音`} /></div><p>{item.zh}</p><div className="stage-footer"><ExpandingCta direction="back" disabled={learnIndex === 0} onClick={() => setLearnIndex(learnIndex - 1)}>上一个</ExpandingCta><ExpandingCta onClick={nextLearn}>{learnIndex === learningItems.length - 1 ? "进入朗读" : "下一个"}</ExpandingCta></div></article></section>}
       {step === "read" && <section className="training-workspace"><aside className="lesson-list"><div><span>完整表达</span><small>{readIndex + 1} / {learningItems.length}</small></div>{learningItems.map((learningItem, index) => <button key={learningItem.en} className={cx(index === readIndex && "is-active", (readScores[index] ?? 0) >= 70 && "is-done")} onClick={() => setReadIndex(index)}><small>句子</small><strong>{learningItem.en}</strong><span>{(readScores[index] ?? 0) >= 70 ? <Check weight="bold" /> : index + 1}</span></button>)}</aside><article className="read-stage"><h1>{item.en}</h1><p>{item.zh}</p><div className="rhythm"><span>节奏重点</span><strong>{item.en.split(" ").slice(0, 4).join(" · ")}</strong></div><MicrophoneToggle label="朗读麦克风" onActivate={submitRead} /><h3>{score === null ? "轮到你说" : score >= 70 ? "朗读通过" : "再试一次"}</h3>{score === null && <p>尽量完整、连贯地说出整句话。</p>}<button type="button" className="read-replay" onClick={playReadDemo}><SpeakerHigh weight="fill" />{heardReadDemos.includes(readIndex) ? "再听一次标准示范" : "听标准示范"}</button>{score >= 70 && <div className="stage-footer read-stage-footer"><span /><ExpandingCta onClick={nextRead}>{readIndex === learningItems.length - 1 ? "进入模拟" : "下一句"}</ExpandingCta></div>}</article></section>}
-      {step === "speak" && <section className="simulation call call--subtitles"><section className="call__stage"><div className="call-presence call-presence--avatarless"><div className="listening-state listening-state--compact"><VoiceWaveform active={!simulationPaused && !result} compact /><CallTimer paused={simulationPaused} /></div></div><div className="transcript simulation__transcript" tabIndex="0" aria-label="模拟对话字幕，可滚动查看历史内容"><article className="transcript__line"><small>店员</small><p>Hi! What can I get started for you today?</p></article><article className="transcript__line is-user"><small>你</small><p>Could you recommend something less sweet?</p></article>{speakingLines >= 3 && <article className="transcript__line"><small>店员</small><p>Sure — how about a medium oat milk latte?</p></article>}{speakingLines >= 4 && <article className="transcript__line is-user"><small>你</small><p>That sounds great. I’ll have that, thank you.</p></article>}</div></section><CallControls paused={simulationPaused} onToggleMicrophone={() => { setSimulationPaused((current) => !current); setSpeakingLines((current) => Math.min(4, current + 1)); }} onEnd={() => onComplete(speakingLines >= 4)} showSubtitles={false} /></section>}
+      {step === "speak" && <section className="simulation call call--subtitles"><section className="call__stage"><div className="call-presence call-presence--compact"><div className="portrait portrait--small"><img src={teacher.image} alt={teacher.name} /></div><div className="listening-state listening-state--compact"><VoiceWaveform active={!simulationPaused && !result} compact /><CallTimer paused={simulationPaused} /></div></div><CallTranscript lines={simulationTranscript} translated={simulationTranslated} onToggleTranslation={(index) => setSimulationTranslated((current) => current.includes(index) ? current.filter((item) => item !== index) : [...current, index])} className="simulation__transcript" /></section><CallControls paused={simulationPaused} onToggleMicrophone={() => { setSimulationPaused((current) => !current); setSpeakingLines((current) => Math.min(4, current + 1)); }} onEnd={() => onComplete(speakingLines >= 4)} showSubtitles={false} /></section>}
       {result && <ResultModal completed={result.completed} onBack={onBack} onAssets={onAssets} />}
       {readFeedback && <ReadScoreModal feedback={readFeedback} onClose={() => setReadFeedback(null)} />}
     </main>
   );
 }
 
-function Assets({ onRepeat }) {
-  const [filter, setFilter] = useState("全部");
-  const [selected, setSelected] = useState(assetRecords[0]);
-  const [deleted, setDeleted] = useState([]);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const records = assetRecords.filter((record) => !deleted.includes(record.id) && (filter === "全部" || record.category === filter));
+const assetConversation = [
+  { id: 1, role: "assistant", speaker: "店员", text: "Would you like me to recommend something?" },
+  {
+    id: 2,
+    role: "user",
+    speaker: "你",
+    text: "I feel like to try something different today.",
+    feedback: {
+      correction: "I feel like trying something different today.",
+      note: "feel like 后面需要接动名词，而不是不定式。",
+      suggestion: "I'd love to try something new today.",
+    },
+  },
+  { id: 3, role: "assistant", speaker: "店员", text: "Sure — how about a medium oat milk latte?" },
+  {
+    id: 4,
+    role: "user",
+    speaker: "你",
+    text: "Could you recommend me something less sweet?",
+    feedback: {
+      correction: "Could you recommend something less sweet?",
+      note: "表达已经很清楚。这里省略 me 会更自然。",
+      suggestion: "Could you suggest something that isn't too sweet?",
+    },
+  },
+];
+
+function AssetModuleMenu({ onSelect }) {
   return (
-    <main className="page assets-page"><PageHeader title="学习资产" subtitle="把场景练习中真正用过的表达，留在这里继续复习。" />
-      <div className="asset-filters">{["全部", "普通场景", "IELTS", "英文面试"].map((item) => <button key={item} className={filter === item ? "is-active" : ""} onClick={() => setFilter(item)}>{item}</button>)}</div>
-      <section className="asset-layout"><aside className="asset-list">{records.map((record) => <button key={record.id} className={selected.id === record.id ? "is-active" : ""} onClick={() => setSelected(record)}><span><small>{record.date} · {record.category}</small><strong>{record.title}</strong><em>{record.items} 个语言资产</em></span><span className="asset-status">{record.status}{record.score && ` · ${record.score}`}</span></button>)}</aside><article className="asset-detail"><header><div><p className="eyebrow">{selected.category}</p><h2>{selected.title}</h2><p>{selected.date} · {selected.status}</p></div><div><Button variant="secondary" aria-label="删除记录" onClick={() => setDeleteOpen(true)}><Trash /></Button><Button onClick={() => onRepeat(selected.title)} icon={<Play weight="fill" />}>复练场景</Button></div></header><nav>{["学习内容", "模拟对话", "表达反馈", "综合报告"].map((item, index) => <button key={item} className={index === 0 ? "is-active" : ""}>{item}</button>)}</nav><div className="asset-items">{learningItems.map((item) => <div key={item.en}><span className="tag">{item.type}</span><p><strong>{item.en}</strong><small>{item.zh}</small></p><AudioToggle compact label={`${item.en} 的发音`} /></div>)}</div></article></section>
-      {deleteOpen && <Modal onClose={() => setDeleteOpen(false)}><p className="eyebrow">DELETE RECORD</p><h2>删除这条学习记录？</h2><p className="modal-lead">场景对话、学习资产和评分报告将一起删除，且无法恢复。</p><div className="modal-actions"><Button variant="secondary" onClick={() => setDeleteOpen(false)}>取消</Button><Button onClick={() => { setDeleted([...deleted, selected.id]); setDeleteOpen(false); setSelected(assetRecords[1]); }}>确认删除</Button></div></Modal>}
+    <div className="asset-module-menu">
+      <button className="asset-module-menu__trigger" type="button" aria-label="切换学习资产模块" aria-haspopup="menu">
+        <SquaresFour weight="bold" />
+        <span>其他资产</span>
+        <CaretDown weight="bold" />
+      </button>
+      <div className="asset-module-menu__popover" role="menu">
+        <button type="button" role="menuitem" onClick={() => onSelect("IELTS")}><BookOpenText /><span><strong>IELTS 学习资产</strong><small>独立学习路径</small></span><CaretRight /></button>
+        <button type="button" role="menuitem" onClick={() => onSelect("英文面试")}><Briefcase /><span><strong>英文面试学习资产</strong><small>独立学习路径</small></span><CaretRight /></button>
+      </div>
+    </div>
+  );
+}
+
+function AnimatedDeleteButton({ onClick }) {
+  return (
+    <button className="asset-delete-button" type="button" aria-label="删除当前学习资产" onClick={onClick}>
+      <Trash weight="bold" />
+      <span>删除</span>
+    </button>
+  );
+}
+
+function AssetFeedback({ feedback }) {
+  return (
+    <section className="asset-feedback" aria-label="AI 表达评价">
+      <header><CheckCircle weight="fill" /><strong>AI 表达评价</strong></header>
+      <div className="asset-feedback__correction"><span>建议表达</span><strong>{feedback.correction}</strong></div>
+      <p><span>表达提示</span>{feedback.note}</p>
+      <p><span>地道说法</span><em>{feedback.suggestion}</em></p>
+    </section>
+  );
+}
+
+function AssetPracticeMenu({ title, onPractice, onRestart }) {
+  return (
+    <div className="asset-practice-menu">
+      <button className="asset-practice-menu__primary" type="button" onClick={() => onPractice(title)}><span className="asset-practice-menu__icon"><Play weight="fill" /></span><strong>复练场景</strong><CaretDown weight="bold" /></button>
+      <div className="asset-practice-menu__popover">
+        <button type="button" onClick={() => onRestart(title)}><ArrowLeft weight="bold" /><span><strong>重新学习</strong><small>从学、读、说第一步开始</small></span></button>
+      </div>
+    </div>
+  );
+}
+
+function AssetConversationDetail({ record, onBack, onPractice, onRestart }) {
+  return (
+    <main className="page assets-page asset-conversation-page">
+      <PageHeader
+        title={`${record.title} · 语境复现`}
+        subtitle="最近一次模拟对话已完整保留，每句表达都附有 AI 评价与更自然的说法。"
+        action={<div className="asset-conversation-actions"><AssetPracticeMenu title={record.title} onPractice={onPractice} onRestart={onRestart} /><button className="training-exit asset-conversation-exit" type="button" aria-label="退出当前学习资产" onClick={onBack}><span><X weight="bold" /></span></button></div>}
+      />
+      <section className="asset-conversation-card">
+        <div className="asset-conversation-card__label"><Translate weight="bold" />对话语境下的纠错与地道表达</div>
+        <div className="asset-conversation-thread">
+          {assetConversation.map((message) => (
+            <article key={message.id} className={cx("asset-message", message.role === "user" && "is-user")}>
+              <small>{message.speaker}</small>
+              <p>{message.text}</p>
+              {message.feedback && <AssetFeedback feedback={message.feedback} />}
+            </article>
+          ))}
+        </div>
+      </section>
     </main>
   );
 }
 
-function Profile({ section, setSection, teacher, onTeacherChange, onLogout }) {
+function AssetModulePlaceholder({ module, onBack }) {
   return (
-    <main className="profile-layout"><aside className="profile-nav"><div className="profile-user"><img src={teacher.image} alt="Yufan" /><span><strong>Yufan</strong><small>yufan@example.com</small></span></div><nav><button className={section === "profile" ? "is-active" : ""} onClick={() => setSection("profile")}><User />个人概览</button><button className={section === "membership" ? "is-active" : ""} onClick={() => setSection("membership")}><Crown />会员权益</button><button className={section === "settings" ? "is-active" : ""} onClick={() => setSection("settings")}><SlidersHorizontal />助手设置</button></nav><button className="logout" onClick={onLogout}><SignOut />退出登录</button></aside><section className="profile-content">{section === "profile" && <Overview />}{section === "membership" && <Membership />}{section === "settings" && <Settings teacher={teacher} onTeacherChange={onTeacherChange} />}</section></main>
+    <main className="page assets-page asset-module-placeholder">
+      <PageHeader title={`${module} 学习资产`} subtitle="该模块将与专属学习路径保持一致，目前已预留独立入口。" action={<Button variant="secondary" onClick={onBack}>返回场景资产</Button>} />
+      <section><div><LockKey weight="bold" /></div><p className="eyebrow">MODULE RESERVED</p><h2>专属资产模块已预留</h2><p>后续确定 {module} 的学习路径和资产结构后，将在这里直接接入。</p></section>
+    </main>
+  );
+}
+
+function Assets({ onPractice, onRestart, initialView = "home", initialRecordTitle }) {
+  const sceneRecords = assetRecords.filter((record) => record.category === "普通场景");
+  const initialRecord = sceneRecords.find((record) => record.title === initialRecordTitle) || sceneRecords[0];
+  const [selected, setSelected] = useState(initialRecord);
+  const [deleted, setDeleted] = useState([]);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [view, setView] = useState(initialView);
+  const [reservedModule, setReservedModule] = useState(null);
+  const records = sceneRecords.filter((record) => !deleted.includes(record.id));
+
+  if (reservedModule) return <AssetModulePlaceholder module={reservedModule} onBack={() => setReservedModule(null)} />;
+  if (view === "detail") return <AssetConversationDetail record={selected} onBack={() => setView("home")} onPractice={onPractice} onRestart={onRestart} />;
+
+  const deleteSelected = () => {
+    const remaining = records.filter((record) => record.id !== selected.id);
+    setDeleted((current) => [...current, selected.id]);
+    setDeleteOpen(false);
+    setSelected(remaining[0] || sceneRecords[0]);
+  };
+
+  return (
+    <main className="page assets-page">
+      <PageHeader title="学习资产" subtitle="把场景练习中真正用过的表达，留在这里继续复习。" action={<AssetModuleMenu onSelect={setReservedModule} />} />
+      <section className="asset-layout">
+        <aside className="asset-list" aria-label="场景训练历史">
+          <div className="asset-list__heading"><div><span>场景训练</span><small>{records.length} 条学习记录</small></div><BookOpenText /></div>
+          {records.map((record) => <button key={record.id} className={selected.id === record.id ? "is-active" : ""} onClick={() => setSelected(record)}><span><small>{record.date} · {record.category}</small><strong>{record.title}</strong><em>{record.items} 个语言资产</em></span><span className="asset-status">{record.status}{record.score && ` · ${record.score}`}</span></button>)}
+          {!records.length && <div className="asset-list__empty">暂无场景学习资产</div>}
+        </aside>
+        <article className="asset-detail">
+          <header>
+            <div><p className="eyebrow">{selected.category}</p><h2>{selected.title}</h2><p>{selected.date} · {selected.status}</p></div>
+            <div className="asset-detail__actions"><AnimatedDeleteButton onClick={() => setDeleteOpen(true)} /><ExpandingCta className="teacher-cta asset-open-button" onClick={() => setView("detail")}>打开当前学习资产</ExpandingCta></div>
+          </header>
+          <div className="asset-items" aria-label="已保存的单词、短语和句子">
+            {learningItems.map((item) => <div key={item.en}><span className="tag">{item.type}</span><p><strong>{item.en}</strong><small>{item.zh}</small></p><AudioToggle compact label={`${item.en} 的发音`} /></div>)}
+          </div>
+        </article>
+      </section>
+      {deleteOpen && <Modal onClose={() => setDeleteOpen(false)}><p className="eyebrow">DELETE ASSET</p><h2>删除当前学习资产？</h2><p className="modal-lead">这条场景记录、对话和评分将一起删除，且无法恢复。</p><div className="modal-actions"><Button variant="secondary" onClick={() => setDeleteOpen(false)}>取消</Button><Button onClick={deleteSelected}>确认删除</Button></div></Modal>}
+    </main>
+  );
+}
+
+function Profile({ section, setSection, teacher, speed, level, onSettingsChange, onLogout }) {
+  return (
+    <main className="profile-layout"><aside className="profile-nav"><div className="profile-user"><img src={teacher.image} alt="Yufan" /><span><strong>Yufan</strong><small>yufan@example.com</small></span></div><nav><button className={section === "profile" ? "is-active" : ""} onClick={() => setSection("profile")}><User />个人概览</button><button className={section === "membership" ? "is-active" : ""} onClick={() => setSection("membership")}><Crown />会员权益</button><button className={section === "settings" ? "is-active" : ""} onClick={() => setSection("settings")}><SlidersHorizontal />助手设置</button></nav><button className="logout" onClick={onLogout}><SignOut />退出登录</button></aside><section className="profile-content">{section === "profile" && <Overview />}{section === "membership" && <Membership />}{section === "settings" && <Settings teacher={teacher} speed={speed} level={level} onSettingsChange={onSettingsChange} />}</section></main>
+  );
+}
+
+const learningMonths = [
+  {
+    key: "2026-05", year: 2026, month: 4, label: "2026 年 5 月",
+    records: { 2: [14, 1, 2], 5: [22, 2, 3], 8: [18, 1, 2], 12: [31, 2, 4], 13: [12, 1, 1], 17: [26, 2, 3], 20: [35, 3, 5], 24: [19, 1, 2], 27: [28, 2, 4], 30: [16, 1, 2] },
+  },
+  {
+    key: "2026-06", year: 2026, month: 5, label: "2026 年 6 月",
+    records: { 1: [20, 1, 2], 3: [28, 2, 3], 4: [16, 1, 2], 7: [34, 2, 4], 9: [15, 1, 2], 10: [25, 2, 3], 14: [38, 3, 5], 15: [18, 1, 2], 18: [31, 2, 4], 19: [12, 1, 1], 21: [27, 2, 3], 23: [35, 3, 5], 24: [22, 2, 3], 28: [29, 2, 4], 30: [17, 1, 2] },
+  },
+  {
+    key: "2026-07", year: 2026, month: 6, label: "2026 年 7 月",
+    records: { 1: [18, 1, 2], 2: [26, 2, 3], 4: [34, 2, 4], 5: [12, 1, 1], 7: [40, 3, 5], 8: [31, 2, 4], 9: [22, 2, 3], 11: [24, 2, 3], 12: [16, 1, 2], 14: [33, 2, 4], 15: [20, 1, 2], 16: [29, 2, 4], 17: [37, 3, 5], 18: [34, 2, 4], 19: [18, 1, 2], 20: [28, 2, 4] },
+  },
+];
+
+const achievements = [
+  { id: "first-talk", title: "初次开口", desc: "完成首次自由对话", category: "开口", progress: 1, total: 1, icon: MessageCircleMore },
+  { id: "seven-days", title: "七日同行", desc: "连续学习 7 天", category: "连续", progress: 7, total: 7, icon: Footprints },
+  { id: "scene-explorer", title: "场景探索者", desc: "完成 5 个不同场景", category: "场景", progress: 5, total: 5, icon: Compass },
+  { id: "expression-star", title: "表达新星", desc: "单次表达评分达到 90", category: "成长", progress: 90, total: 90, icon: Sparkles },
+  { id: "pronunciation", title: "发音校准师", desc: "完成 30 次跟读评分", category: "成长", progress: 18, total: 30, icon: AudioLines },
+  { id: "asset-keeper", title: "资产收藏家", desc: "保存 20 个学习资产", category: "成长", progress: 12, total: 20, icon: PackageCheck },
+  { id: "conversation-regular", title: "对话常客", desc: "累计完成 20 次对话", category: "开口", progress: 9, total: 20, icon: MessagesSquare },
+  { id: "goal-hitter", title: "目标命中", desc: "连续 4 周完成周目标", category: "连续", progress: 2, total: 4, icon: Target },
+  { id: "language-builder", title: "表达拓荒者", desc: "掌握 100 个实用表达", category: "成长", progress: 46, total: 100, icon: Languages },
+  { id: "listener", title: "听力捕手", desc: "收听示范音频 50 次", category: "开口", progress: 32, total: 50, icon: LucideHeadphones },
+  { id: "full-month", title: "月度全勤", desc: "单月完成 20 天打卡", category: "连续", progress: 16, total: 20, icon: CalendarCheck2 },
+  { id: "speaking-master", title: "口语大师", desc: "解锁其余全部成就", category: "场景", progress: 4, total: 11, icon: Trophy },
+];
+
+function LearningCalendar() {
+  const [monthIndex, setMonthIndex] = useState(learningMonths.length - 1);
+  const [selectedDay, setSelectedDay] = useState(20);
+  const month = learningMonths[monthIndex];
+  const daysInMonth = new Date(month.year, month.month + 1, 0).getDate();
+  const leadingDays = (new Date(month.year, month.month, 1).getDay() + 6) % 7;
+  const selectedRecord = month.records[selectedDay];
+  const changeMonth = (nextIndex) => {
+    const nextMonth = learningMonths[nextIndex];
+    const latestRecordedDay = Math.max(...Object.keys(nextMonth.records).map(Number));
+    setMonthIndex(nextIndex);
+    setSelectedDay(latestRecordedDay);
+  };
+  return (
+    <article className="calendar-card">
+      <header className="calendar-card__header">
+        <div><p className="eyebrow">LEARNING CALENDAR</p><h2>学习日历</h2></div>
+        <div className="calendar-month-switcher">
+          <button type="button" aria-label="查看上一个月" disabled={monthIndex === 0} onClick={() => changeMonth(monthIndex - 1)}><ChevronLeft /></button>
+          <strong aria-live="polite">{month.label}</strong>
+          <button type="button" aria-label="查看下一个月" disabled={monthIndex === learningMonths.length - 1} onClick={() => changeMonth(monthIndex + 1)}><ChevronRight /></button>
+        </div>
+      </header>
+      <div className="calendar-weekdays" aria-hidden="true">{["一", "二", "三", "四", "五", "六", "日"].map((day) => <span key={day}>周{day}</span>)}</div>
+      <div className="calendar-days" role="grid" aria-label={`${month.label}学习记录`}>
+        {Array.from({ length: leadingDays }, (_, index) => <span key={`blank-${index}`} className="calendar-blank" />)}
+        {Array.from({ length: daysInMonth }, (_, index) => {
+          const day = index + 1;
+          const record = month.records[day];
+          const isToday = month.key === "2026-07" && day === 20;
+          return (
+            <button key={day} type="button" role="gridcell" aria-label={`${month.label}${day}日${record ? `，已打卡 ${record[0]} 分钟` : "，无学习记录"}`} className={cx(record && "is-practiced", isToday && "is-today", selectedDay === day && "is-selected")} onClick={() => setSelectedDay(day)}>
+              <span>{day}</span>{record && <i aria-hidden="true" />}{isToday && <small>今天</small>}
+            </button>
+          );
+        })}
+      </div>
+      <div className={cx("calendar-summary", selectedRecord && "is-complete")}>
+        <span className="calendar-summary__status"><CalendarCheck2 />{selectedRecord ? "已打卡" : "未打卡"}</span>
+        <div><strong>{month.month + 1} 月 {selectedDay} 日</strong><small>{selectedRecord ? `${selectedRecord[0]} 分钟 · ${selectedRecord[1]} 次练习 · ${selectedRecord[2]} 个学习资产` : "这一天还没有学习记录"}</small></div>
+      </div>
+    </article>
+  );
+}
+
+function AchievementSystem() {
+  const [filter, setFilter] = useState("全部");
+  const filtered = filter === "全部" ? achievements : achievements.filter((item) => item.category === filter);
+  const unlockedCount = achievements.filter((item) => item.progress >= item.total).length;
+  return (
+    <section className="achievement-system">
+      <header className="achievement-system__header">
+        <div><p className="eyebrow">ACHIEVEMENTS</p><h2>成就图鉴</h2><p>每一种进步，都值得被单独记录。</p></div>
+        <div className="achievement-overall"><span><strong>{unlockedCount}</strong><small>/ {achievements.length} 已获得</small></span><progress value={unlockedCount} max={achievements.length} /></div>
+      </header>
+      <nav className="achievement-filters" aria-label="成就分类">{["全部", "开口", "连续", "场景", "成长"].map((item) => <button key={item} type="button" className={filter === item ? "is-active" : ""} onClick={() => setFilter(item)}>{item}<small>{item === "全部" ? achievements.length : achievements.filter((achievement) => achievement.category === item).length}</small></button>)}</nav>
+      <div className="achievement-grid" aria-live="polite">
+        {filtered.map(({ icon: Icon, ...item }) => {
+          const unlocked = item.progress >= item.total;
+          const percentage = Math.min(100, Math.round((item.progress / item.total) * 100));
+          return <article key={item.id} className={cx("achievement-card", unlocked && "is-unlocked")}><div className="achievement-card__icon"><Icon strokeWidth={1.8} /></div><div className="achievement-card__copy"><span><strong>{item.title}</strong><em>{unlocked ? "已获得" : `${percentage}%`}</em></span><p>{item.desc}</p><div><progress value={item.progress} max={item.total} /><small>{item.progress} / {item.total}</small></div></div></article>;
+        })}
+      </div>
+    </section>
   );
 }
 
 function Overview() {
-  return <><PageHeader eyebrow="PERSONAL OVERVIEW" title="你的学习空间" subtitle="把每一次开口变成看得见、可继续的成长记录。" /><div className="stat-grid"><article><Clock /><span><small>本周学习时长</small><strong>183 <em>分钟</em></strong></span></article><article><BookOpenText /><span><small>已保存学习资产</small><strong>12 <em>项</em></strong></span></article><article><Fire /><span><small>连续学习天数</small><strong>7 <em>天</em></strong></span></article></div><section className="overview-grid"><article className="calendar-card"><p className="eyebrow">LEARNING CALENDAR</p><h2>7 月学习日历</h2><div className="calendar-days">{Array.from({ length: 31 }, (_, index) => <span key={index} className={index < 19 ? "is-practiced" : index === 19 ? "is-today" : ""}>{index + 1}</span>)}</div><Button><CalendarBlank />今天已自动打卡</Button></article><article className="rhythm-card"><p className="eyebrow">LAST SEVEN DAYS</p><h2>练习节奏</h2><div className="bars">{[38, 62, 78, 26, 92, 70, 48].map((height, index) => <span key={index} style={{ height: `${height}%` }}><small>{[18, 26, 34, 12, 40, 31, 22][index]}m</small></span>)}</div></article></section><section className="milestones"><div><p className="eyebrow">MILESTONES</p><h2>最近成就</h2></div><article><Medal /><span><strong>开口先锋</strong><small>完成首次自由对话</small></span><em>已解锁</em></article><article><Fire /><span><strong>坚持不懈</strong><small>连续学习 7 天</small></span><em>已解锁</em></article><article><Crown /><span><strong>更上层楼</strong><small>单项诊断达到 90 分</small></span><em>待解锁</em></article></section></>;
+  return <><PageHeader eyebrow="PERSONAL OVERVIEW" title="你的学习空间" subtitle="把每一次开口变成看得见、可继续的成长记录。" /><div className="stat-grid"><article><Clock /><span><small>本周学习时长</small><strong>183 <em>分钟</em></strong></span></article><article><BookOpenText /><span><small>已保存学习资产</small><strong>12 <em>项</em></strong></span></article><article><Fire /><span><small>连续学习天数</small><strong>7 <em>天</em></strong></span></article></div><section className="overview-grid"><LearningCalendar /><article className="rhythm-card"><p className="eyebrow">LAST SEVEN DAYS</p><h2>练习节奏</h2><div className="bars">{[38, 62, 78, 26, 92, 70, 48].map((height, index) => <span key={index} style={{ height: `${height}%` }}><small>{[18, 26, 34, 12, 40, 31, 22][index]}m</small></span>)}</div></article></section><AchievementSystem /></>;
 }
 
 function Membership() {
@@ -971,10 +1276,13 @@ function Membership() {
   return <><PageHeader eyebrow="MEMBERSHIP & PRICING" title="会员与订阅中心" subtitle="练习额度平时不会打扰你，只会在不足 20% 或无法开始时提醒。" /><div className="plan-grid">{plans.map((plan) => <article key={plan.id} className={cx("plan-card", plan.id === "pro" && "is-featured")}><div>{plan.id === "free" && <span className="plan-label">当前方案</span>}{plan.id === "pro" && <span className="plan-label">推荐</span>}<h2>{plan.name}</h2><p>{plan.desc}</p></div><p className="price"><small>¥</small><strong>{plan.price}</strong><span>{plan.suffix}</span></p><ul>{plan.features.map((feature) => <li key={feature}><Check />{feature}</li>)}</ul>{plan.id === "free" ? <div className="quota"><span><small>今日自由对话</small><strong>3 / 5 分钟</strong></span><progress value="3" max="5" /><span><small>今日普通场景</small><strong>0 / 1 次</strong></span></div> : <Button variant={plan.id === "pro" ? "primary" : "secondary"} onClick={() => setCheckout(plan)}>升级{plan.name}</Button>}</article>)}</div>{checkout && <Modal onClose={() => setCheckout(null)}><p className="eyebrow">MOCK PAYMENT</p><h2>确认升级至{checkout.name}</h2><p className="modal-lead">首版为支付演示。确认后仅展示成功状态，不会产生真实扣款。</p><dl className="checkout-summary"><div><dt>订阅方案</dt><dd>{checkout.name}</dd></div><div><dt>订阅金额</dt><dd>¥{checkout.price} / 月</dd></div><div><dt>生效时间</dt><dd>立即生效</dd></div></dl><Button onClick={() => setCheckout(null)}>模拟支付并完成</Button></Modal>}</>;
 }
 
-function Settings({ teacher, onTeacherChange }) {
-  const [speed, setSpeed] = useState("自然");
-  const [level, setLevel] = useState("可以简单交流");
-  return <><PageHeader eyebrow="ASSISTANT SETTINGS" title="AI 助手设置" subtitle="只调整真正影响对话体验的选项。" action={<span className="sync-state"><CheckCircle />设置已同步</span>} /><section className="settings-list"><article><div><h2>对话语速</h2><p>选择更舒适的回应节奏。</p></div><div className="segment">{["慢一些", "适中", "自然", "快一些"].map((item) => <button key={item} className={speed === item ? "is-active" : ""} onClick={() => setSpeed(item)}>{item}</button>)}</div></article><article><div><h2>英语水平</h2><p>新对话会按照该难度调整表达。</p></div><div className="select-like"><span>{level}</span><CaretDown /></div></article><article className="teacher-settings"><div><h2>AI 老师</h2><p>每位老师有固定口音和陪练方式。</p></div><div className="teacher-setting-grid">{teachers.map((item) => <button key={item.id} className={teacher.id === item.id ? "is-active" : ""} onClick={() => onTeacherChange(item)}><img src={item.image} alt={item.name} /><span><strong>{item.name}</strong><small>{item.accent} · {item.personality}</small></span><Headphones /></button>)}</div></article><article><div><h2>账户与隐私</h2><p>管理密码与账户数据。</p></div><div className="account-actions"><button><Password />修改密码<CaretRight /></button><button className="danger"><Trash />删除账户<CaretRight /></button></div></article></section></>;
+function Settings({ teacher, speed, level, onSettingsChange }) {
+  const [syncPulse, setSyncPulse] = useState(0);
+  const updateSettings = (next) => {
+    onSettingsChange(next);
+    setSyncPulse((current) => current + 1);
+  };
+  return <div className="assistant-settings-page"><PageHeader eyebrow="ASSISTANT SETTINGS" title="AI 助手设置" subtitle="只调整真正影响对话体验的选项。" action={<span key={syncPulse} className="sync-state"><CheckCircle />设置已同步</span>} /><section className="settings-list"><article><div><h2>对话语速</h2><p>选择更舒适的回应节奏。</p></div><SpeedSelector className="assistant-settings__speed" value={speed} onChange={(nextSpeed) => updateSettings({ speed: nextSpeed, level, teacher })} /></article><article><div><h2>英语水平</h2><p>新对话会按照该难度调整表达。</p></div><LevelSelect value={level} onChange={(nextLevel) => updateSettings({ speed, level: nextLevel, teacher })} /></article><article className="teacher-settings"><div><h2>AI 老师</h2><p>每位老师有固定口音和陪练方式。</p></div><TeacherSelector className="assistant-settings__teachers" selectedId={teacher.id} onSelect={(nextTeacher) => updateSettings({ speed, level, teacher: nextTeacher })} /></article><article><div><h2>账户与隐私</h2><p>管理密码与账户数据。</p></div><div className="account-actions"><button><Password />修改密码<CaretRight /></button><button className="danger"><Trash />删除账户<CaretRight /></button></div></article></section></div>;
 }
 
 function Paywall({ title, onClose, onMembership }) {
@@ -1053,22 +1361,23 @@ export function App() {
   const goLevel = () => navigate("/level", { flow: "level", page: "conversation", authMode: authMode, training: null, result: null });
   const goTeacher = () => navigate("/teacher", { flow: "teacher", page: "conversation", authMode: authMode, training: null, result: null });
   const enterApp = () => setMainPage("conversation");
-  const startTraining = (title, initialStep = "learn") => {
+  const startTraining = (title, initialStep = "learn", options = {}) => {
     setSceneTitle(title);
-    navigate("/training", { flow: "app", page: "scenes", authMode, training: { initialStep }, result: null });
+    navigate("/training", { flow: "app", page: options.returnPage || "scenes", authMode, training: { initialStep, standaloneSpeak: Boolean(options.standaloneSpeak), returnPage: options.returnPage || "scenes" }, result: null });
   };
   const showResult = (completed) => setResult({ completed });
   const setMainPage = (next) => navigate(pagePaths[next] || "/conversation", { flow: "app", page: next, authMode, training: null, result: null });
+  const openCompletedAssetDetail = () => navigate("/assets?view=detail", { flow: "app", page: "assets", authMode, training: null, result: null });
 
   if (flow === "splash") return <Splash onStart={() => goAuth("signup")} onLogin={() => goAuth("login")} />;
   if (flow === "auth") return <Auth mode={authMode} onBack={goSplash} onSuccess={goLevel} />;
   if (flow === "level") return <LevelSetup selected={level} onSelect={setLevel} onNext={goTeacher} />;
   if (flow === "teacher") return <TeacherSetup selectedId={teacher.id} onSelect={(id) => setTeacher(teachers.find((item) => item.id === id))} onFinish={enterApp} />;
   let content;
-  if (training) content = <Training sceneTitle={sceneTitle} teacher={teacher} initialStep={training.initialStep} result={result} onExit={() => setMainPage("scenes")} onComplete={showResult} onBack={() => setMainPage("scenes")} onAssets={() => setMainPage("assets")} />;
+  if (training) content = <Training sceneTitle={sceneTitle} teacher={teacher} initialStep={training.initialStep} standaloneSpeak={training.standaloneSpeak} result={result} onExit={() => setMainPage(training.returnPage || "scenes")} onComplete={showResult} onBack={() => setMainPage(training.returnPage || "scenes")} onAssets={openCompletedAssetDetail} />;
   else if (page === "conversation") content = <Conversation teacher={teacher} speed={conversationSpeed} level={level} onSettingsChange={(settings) => { setConversationSpeed(settings.speed); setLevel(settings.level); setTeacher(settings.teacher); }} />;
   else if (page === "scenes") content = <Scenes onStartTraining={startTraining} onLocked={setPaywall} />;
-  else if (page === "assets") content = <Assets onRepeat={(title) => startTraining(title, "speak")} />;
-  else content = <Profile section={page} setSection={setMainPage} teacher={teacher} onTeacherChange={setTeacher} onLogout={goSplash} />;
+  else if (page === "assets") content = <Assets initialView={new URLSearchParams(window.location.search).get("view") === "detail" ? "detail" : "home"} initialRecordTitle={sceneTitle} onPractice={(title) => startTraining(title, "speak", { standaloneSpeak: true, returnPage: "assets" })} onRestart={(title) => startTraining(title, "learn", { returnPage: "assets" })} />;
+  else content = <Profile section={page} setSection={setMainPage} teacher={teacher} speed={conversationSpeed} level={level} onSettingsChange={(settings) => { setConversationSpeed(settings.speed); setLevel(settings.level); setTeacher(settings.teacher); }} onLogout={goSplash} />;
   return <AppShell page={page} setPage={setMainPage} teacher={teacher}>{content}{paywall && <Paywall title={paywall} onClose={() => setPaywall(null)} onMembership={() => { setPaywall(null); setMainPage("membership"); }} />}</AppShell>;
 }
