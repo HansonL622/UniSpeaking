@@ -8,7 +8,6 @@ import {
   CaretDown,
   CaretRight,
   Subtitles,
-  ChartBar,
   Check,
   CheckCircle,
   Clock,
@@ -25,7 +24,6 @@ import {
   MicrophoneSlash,
   PaperPlaneTilt,
   Password,
-  Pause,
   PhoneDisconnect,
   Play,
   Plus,
@@ -43,6 +41,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { assetRecords, learningItems, levels, plans, recommendations, teachers } from "./data.js";
+import { createRealtimeClient } from "./realtimeClient.js";
 
 const cx = (...parts) => parts.filter(Boolean).join(" ");
 
@@ -68,6 +67,66 @@ function AudioToggle({ label = "播放声音", compact = false, mini = false }) 
       <span className="audio-toggle__speaker"><SpeakerHigh weight="fill" /></span>
       <span className="audio-toggle__muted"><SpeakerSlash weight="fill" /></span>
     </button>
+  );
+}
+
+function MicrophoneToggle({ label = "麦克风", className, onActivate }) {
+  const [active, setActive] = useState(false);
+  const toggle = () => {
+    const nextActive = !active;
+    setActive(nextActive);
+    if (nextActive) onActivate?.();
+  };
+  return (
+    <button
+      type="button"
+      className={cx("microphone-toggle", active && "is-active", className)}
+      aria-label={active ? `关闭${label}` : `开启${label}`}
+      aria-pressed={active}
+      onClick={toggle}
+    >
+      <MicrophoneSlash className="microphone-toggle__slash" weight="fill" />
+      <Microphone className="microphone-toggle__active" weight="fill" />
+    </button>
+  );
+}
+
+const formatCallDuration = (totalSeconds) => {
+  const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, "0");
+  const seconds = (totalSeconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${seconds}`;
+};
+
+function CallTimer({ state = "active", paused = false, className }) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    const startedAt = Date.now();
+    const updateElapsed = () => setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    updateElapsed();
+    const interval = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const duration = formatCallDuration(elapsedSeconds);
+  const label = state === "connecting"
+    ? "连接中"
+    : state === "ended"
+      ? "已结束"
+      : paused
+        ? `已暂停 · ${duration}`
+        : duration;
+
+  return <time className={cx("call-presence__time", className)}>{label}</time>;
+}
+
+function CallControls({ paused, onToggleMicrophone, onEnd, disabled = false, subtitles = false, onToggleSubtitles, showSubtitles = true, className }) {
+  return (
+    <div className={cx("call-controls", className)}>
+      <button className={cx("round-control", paused && "is-on")} aria-label={paused ? "恢复会话" : "暂停会话"} disabled={disabled} onClick={onToggleMicrophone}>{paused ? <MicrophoneSlash /> : <Microphone />}</button>
+      {showSubtitles && <button className={cx("round-control", subtitles && "is-on")} aria-label={subtitles ? "关闭字幕" : "打开字幕"} onClick={onToggleSubtitles}><Subtitles /></button>}
+      <button className="round-control round-control--end" aria-label="结束当前会话" disabled={disabled} onClick={onEnd}><PhoneDisconnect weight="fill" /></button>
+    </div>
   );
 }
 
@@ -146,8 +205,9 @@ function VoiceWaveform({ active, compact = false }) {
   );
 }
 
-function ExpandingCta({ children, className, ...props }) {
-  return <button className={cx("expanding-cta", className)} {...props}><span>{children}</span><ArrowRight weight="bold" /></button>;
+function ExpandingCta({ children, className, direction = "forward", ...props }) {
+  const Arrow = direction === "back" ? ArrowLeft : ArrowRight;
+  return <button className={cx("expanding-cta", direction === "back" && "expanding-cta--back", className)} {...props}><span>{children}</span><Arrow weight="bold" /></button>;
 }
 
 function Button({ children, variant = "primary", icon, className, ...props }) {
@@ -376,17 +436,18 @@ function ConversationSettings({ speed, level, teacher, onSave, onClose }) {
 
 function Conversation({ teacher, speed, level, onSettingsChange }) {
   const [inCall, setInCall] = useState(false);
+  const [callState, setCallState] = useState("idle");
+  const [callStatus, setCallStatus] = useState("准备开始");
+  const [callError, setCallError] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [subtitles, setSubtitles] = useState(false);
-  const [muted, setMuted] = useState(false);
+  const [subtitles, setSubtitles] = useState(true);
+  const [paused, setPaused] = useState(false);
   const [translated, setTranslated] = useState([]);
+  const [lines, setLines] = useState([]);
+  const clientRef = useRef(null);
+  const remoteAudioRef = useRef(null);
   const transcriptRef = useRef(null);
   const transcriptPinnedRef = useRef(true);
-  const lines = [
-    { who: teacher.name, en: "Hi! It’s good to see you. How has your day been?", zh: "嗨！很高兴见到你。今天过得怎么样？" },
-    { who: "你", en: "Pretty good. I finished work a little early today.", zh: "挺好的，我今天稍微早一点下班。" },
-    { who: teacher.name, en: "That sounds nice. What would you like to do with the extra time?", zh: "听起来不错。你想怎么利用多出来的时间？" },
-  ];
   const toggleTranslation = (index) => setTranslated((current) => current.includes(index) ? current.filter((item) => item !== index) : [...current, index]);
   const handleTranscriptScroll = () => {
     const transcript = transcriptRef.current;
@@ -394,15 +455,201 @@ function Conversation({ teacher, speed, level, onSettingsChange }) {
     transcriptPinnedRef.current = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
   };
 
+  const updateRealtimeTranscript = ({ id, who, delta = "", text = "", final = false }) => {
+    const content = String(text || delta || "");
+    if (!content) return;
+    setLines((current) => {
+      const lineId = id || `${who}-live`;
+      const index = current.findIndex((line) => line.id === lineId && !line.final);
+      if (index < 0) {
+        const idSuffix = final ? `-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` : "";
+        return [...current, { id: `${lineId}${idSuffix}`, who, en: content, final }];
+      }
+      const next = [...current];
+      next[index] = {
+        ...next[index],
+        id: final ? `${next[index].id}-final-${Date.now()}` : next[index].id,
+        en: text || `${next[index].en}${delta}`,
+        final,
+      };
+      return next;
+    });
+  };
+
+  const handleRealtimeEvent = (event) => {
+    if (event.type === "local.connecting") {
+      setCallState("connecting");
+      setCallStatus("正在连接模型");
+      return;
+    }
+    if (event.type === "local.connected") {
+      setCallState("connected");
+      setCallStatus("正在等待模型会话");
+      return;
+    }
+    if (event.type === "session.created") {
+      setCallState("connected");
+      setCallStatus("模型会话已建立");
+      return;
+    }
+    if (event.type === "session.updated") {
+      setCallState("active");
+      setCallStatus("可以开始说了");
+      return;
+    }
+    if (event.type === "conversation.item.input_audio_transcription.completed") {
+      updateRealtimeTranscript({
+        id: event.item_id || event.item?.id || "user-live",
+        who: "你",
+        text: event.transcript || event.text || "",
+        final: true,
+      });
+      return;
+    }
+    if (
+      event.type === "conversation.item.input_audio_transcription.delta"
+      || event.type === "conversation.item.input_audio_transcription.text"
+    ) {
+      const preview = `${event.text || ""}${event.stash || ""}`;
+      updateRealtimeTranscript({
+        id: event.item_id || event.item?.id || "user-live",
+        who: "你",
+        ...(preview ? { text: preview } : { delta: event.delta || "" }),
+      });
+      return;
+    }
+    if (event.type === "response.audio_transcript.delta" || event.type === "response.text.delta") {
+      updateRealtimeTranscript({
+        id: event.item_id || event.response_id || "assistant-live",
+        who: teacher.name,
+        delta: event.delta || event.text || "",
+      });
+      return;
+    }
+    if (event.type === "response.audio_transcript.done") {
+      updateRealtimeTranscript({
+        id: event.item_id || event.response_id || "assistant-live",
+        who: teacher.name,
+        text: event.transcript || event.text || "",
+        final: true,
+      });
+      return;
+    }
+    if (event.type === "input_audio_buffer.speech_started") {
+      setCallStatus("正在听你说话");
+      return;
+    }
+    if (event.type === "response.audio.delta") {
+      setCallStatus(`${teacher.name} 正在回应`);
+      return;
+    }
+    if (event.type === "local.paused") {
+      setCallState("paused");
+      setCallStatus("会话已暂停");
+      return;
+    }
+    if (event.type === "local.resumed") {
+      setCallState("active");
+      setCallStatus("会话已恢复");
+      return;
+    }
+    if (event.type === "local.interrupted") {
+      setCallStatus("已打断当前回应");
+      return;
+    }
+    if (event.type === "local.ended") {
+      setInCall(false);
+      setSubtitles(false);
+      setPaused(false);
+      setCallState("idle");
+      setCallStatus("准备开始");
+      clientRef.current = null;
+      return;
+    }
+    if (event.type === "error" || event.type === "local.error") {
+      setCallState("error");
+      setCallError(event.message || event.error?.message || "实时会话发生错误");
+      setCallStatus("连接异常");
+    }
+  };
+
+  const getClient = () => {
+    if (!clientRef.current) {
+      clientRef.current = createRealtimeClient({
+        onEvent: handleRealtimeEvent,
+        onRemoteStream: (stream) => {
+          if (!remoteAudioRef.current) return;
+          remoteAudioRef.current.srcObject = stream;
+          void remoteAudioRef.current.play().catch(() => {
+            setCallStatus("点击页面后可播放 AI 声音");
+          });
+        },
+      });
+    }
+    return clientRef.current;
+  };
+
+  const startConversation = async () => {
+    setInCall(true);
+    setPaused(false);
+    setSubtitles(true);
+    setLines([]);
+    setTranslated([]);
+    setCallError("");
+    setCallState("connecting");
+    setCallStatus("正在请求麦克风");
+    try {
+      await getClient().start({
+        topic: `自由对话。老师：${teacher.name}。语速：${speed}。水平：${level || "basic"}。`,
+      });
+    } catch (error) {
+      setCallState("error");
+      setCallError(error instanceof Error ? error.message : "无法开始实时对话");
+      setCallStatus("连接失败");
+    }
+  };
+
+  const togglePaused = async () => {
+    if (callState === "ended") return;
+    const next = !paused;
+    setPaused(next);
+    if (next) await getClient().pause();
+    else await getClient().resume();
+  };
+
+  const stopConversation = async () => {
+    const client = clientRef.current;
+    clientRef.current = null;
+    setInCall(false);
+    setSubtitles(false);
+    setPaused(false);
+    setCallState("idle");
+    setCallStatus("准备开始");
+    await client?.stop({ reason: "user_stop" });
+  };
+
+  useEffect(() => () => {
+    void clientRef.current?.stop({ notifyBackend: false, reason: "component_unmount" });
+  }, []);
+
   useEffect(() => {
     if (!subtitles) return undefined;
     transcriptPinnedRef.current = true;
     const frame = requestAnimationFrame(() => {
       const transcript = transcriptRef.current;
-      if (transcript && transcriptPinnedRef.current) transcript.scrollTo({ top: transcript.scrollHeight, behavior: "smooth" });
+      if (transcript) transcript.scrollTop = transcript.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [subtitles, lines.length]);
+  }, [subtitles]);
+
+  useEffect(() => {
+    if (!subtitles || !transcriptPinnedRef.current) return undefined;
+    const frame = requestAnimationFrame(() => {
+      const transcript = transcriptRef.current;
+      if (transcript && transcriptPinnedRef.current) transcript.scrollTop = transcript.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [subtitles, lines]);
 
   if (!inCall) return (
     <main className="conversation standby">
@@ -412,31 +659,30 @@ function Conversation({ teacher, speed, level, onSettingsChange }) {
         <div className="portrait portrait--large"><img src={teacher.image} alt={teacher.name} /></div>
         <p className="eyebrow">{teacher.name.toUpperCase()} · {teacher.accent}</p>
         <h1>想聊什么都可以</h1>
-        <p>像打电话一样自然开口，这段对话不会被保存</p>
-        <ExpandingCta className="standby__cta" onClick={() => setInCall(true)}>开始对话</ExpandingCta>
+        <p>像打电话一样自然开口</p>
+        {callError && <p className="call-error">{callError}</p>}
+        <ExpandingCta className="standby__cta" onClick={startConversation}>开始对话</ExpandingCta>
       </section>
       <p className="privacy-note"><ShieldCheck />自由对话内容不会保存</p>
     </main>
   );
   return (
     <main className={cx("conversation call", subtitles && "call--subtitles")}>
+      <audio ref={remoteAudioRef} className="remote-audio" autoPlay playsInline />
       <div className="conversation__top conversation__top--empty" />
       <section className="call__stage">
         <div className={cx("call-presence", subtitles && "call-presence--compact")}>
           <div className={cx("portrait", subtitles ? "portrait--small" : "portrait--call")}><img src={teacher.image} alt={teacher.name} /></div>
           <div className={cx("listening-state", subtitles && "listening-state--compact")}>
-            <VoiceWaveform active={!muted} compact={subtitles} />
-            <time className="call-presence__time">02:18</time>
-            {!subtitles && <span>{muted ? "麦克风已关闭" : "请继续说"}</span>}
+            <VoiceWaveform active={!paused && callState !== "connecting" && callState !== "ended"} compact={subtitles} />
+            <CallTimer state={callState} paused={paused} />
+            {!subtitles && <span>{callStatus}</span>}
           </div>
         </div>
-        {subtitles && <div ref={transcriptRef} className="transcript" onScroll={handleTranscriptScroll} tabIndex="0" aria-label="对话字幕，可滚动查看历史内容">{lines.map((line, index) => <article key={index} className={cx("transcript__line", line.who === "你" && "is-user")}><small>{line.who}</small><p>{line.en}</p><button onClick={() => toggleTranslation(index)}><Translate />{translated.includes(index) ? "收起翻译" : "翻译"}</button>{translated.includes(index) && <span>{line.zh}</span>}</article>)}</div>}
+        {subtitles && <div ref={transcriptRef} className="transcript" onScroll={handleTranscriptScroll} tabIndex="0" aria-label="对话字幕，可滚动查看历史内容">{lines.length === 0 ? <article className="transcript__line"><small>字幕</small><p>{callStatus}</p></article> : lines.map((line, index) => <article key={line.id || index} className={cx("transcript__line", line.who === "你" && "is-user")}><small>{line.who}</small><p>{line.en}</p>{line.zh && <button onClick={() => toggleTranslation(index)}><Translate />{translated.includes(index) ? "收起翻译" : "翻译"}</button>}{translated.includes(index) && <span>{line.zh}</span>}</article>)}</div>}
+        {callError && <p className="call-error">{callError}</p>}
       </section>
-      <div className="call-controls">
-        <button className={cx("round-control", muted && "is-on")} aria-label={muted ? "打开麦克风" : "关闭麦克风"} onClick={() => setMuted(!muted)}>{muted ? <MicrophoneSlash /> : <Microphone />}</button>
-        <button className={cx("round-control", subtitles && "is-on")} aria-label={subtitles ? "关闭字幕" : "打开字幕"} onClick={() => setSubtitles(!subtitles)}><Subtitles /></button>
-        <button className="round-control round-control--end" aria-label="结束对话" onClick={() => setInCall(false)}><PhoneDisconnect weight="fill" /></button>
-      </div>
+      <CallControls paused={paused} onToggleMicrophone={togglePaused} onEnd={stopConversation} disabled={callState === "ended"} subtitles={subtitles} onToggleSubtitles={() => setSubtitles(!subtitles)} />
     </main>
   );
 }
@@ -487,35 +733,210 @@ function Scenes({ onStartTraining, onLocked }) {
   );
 }
 
-function Modal({ children, onClose, wide = false }) {
-  return <div className="modal-backdrop" onMouseDown={onClose}><div className={cx("modal", wide && "modal--wide")} onMouseDown={(event) => event.stopPropagation()}><button className="modal__close" aria-label="关闭" onClick={onClose}><X /></button>{children}</div></div>;
+function Modal({ children, onClose, wide = false, dismissible = true, className }) {
+  return <div className="modal-backdrop" onMouseDown={dismissible ? onClose : undefined}><div className={cx("modal", wide && "modal--wide", className)} role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>{dismissible && <button className="modal__close" aria-label="关闭" onClick={onClose}><X /></button>}{children}</div></div>;
 }
 
-function Training({ sceneTitle, teacher, initialStep = "learn", onExit, onComplete }) {
-  const [step, setStep] = useState(initialStep);
-  const [itemIndex, setItemIndex] = useState(0);
-  const [score, setScore] = useState(null);
-  const [speakingLines, setSpeakingLines] = useState(2);
-  const item = learningItems[itemIndex];
-  const nextLearn = () => { if (itemIndex < learningItems.length - 1) setItemIndex(itemIndex + 1); else { setItemIndex(0); setStep("read"); } };
-  const submitRead = () => setScore(itemIndex === 1 ? 68 : 86);
-  const nextRead = () => { setScore(null); if (itemIndex < learningItems.length - 1) setItemIndex(itemIndex + 1); else { setItemIndex(0); setStep("speak"); } };
+const completedSimulationMetrics = [
+  { label: "发音清晰度", value: 84 },
+  { label: "流利度", value: 78 },
+  { label: "表达完整度", value: 91 },
+  { label: "互动回应", value: 86 },
+  { label: "自然度", value: 80 },
+];
+
+const incompleteSimulationMetrics = [
+  { label: "发音清晰度", value: 72 },
+  { label: "流利度", value: 64 },
+  { label: "表达完整度", value: 70 },
+  { label: "互动回应", value: 62 },
+  { label: "自然度", value: 68 },
+];
+
+function RadarChart({ metrics }) {
+  const canvasRef = useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const size = 320;
+    const density = window.devicePixelRatio || 1;
+    canvas.width = size * density;
+    canvas.height = size * density;
+    const context = canvas.getContext("2d");
+    context.scale(density, density);
+    context.clearRect(0, 0, size, size);
+
+    const center = size / 2;
+    const radius = 92;
+    const angleAt = (index) => -Math.PI / 2 + index * (Math.PI * 2 / metrics.length);
+    const pointAt = (index, pointRadius) => ({
+      x: center + Math.cos(angleAt(index)) * pointRadius,
+      y: center + Math.sin(angleAt(index)) * pointRadius,
+    });
+    const traceShape = (pointRadius) => {
+      context.beginPath();
+      metrics.forEach((_, index) => {
+        const point = pointAt(index, pointRadius);
+        if (index === 0) context.moveTo(point.x, point.y);
+        else context.lineTo(point.x, point.y);
+      });
+      context.closePath();
+    };
+
+    context.lineWidth = 1;
+    context.strokeStyle = "#deded9";
+    for (let level = 1; level <= 4; level += 1) {
+      traceShape(radius * level / 4);
+      context.stroke();
+    }
+    metrics.forEach((_, index) => {
+      const point = pointAt(index, radius);
+      context.beginPath();
+      context.moveTo(center, center);
+      context.lineTo(point.x, point.y);
+      context.stroke();
+    });
+
+    context.beginPath();
+    metrics.forEach((metric, index) => {
+      const point = pointAt(index, radius * metric.value / 100);
+      if (index === 0) context.moveTo(point.x, point.y);
+      else context.lineTo(point.x, point.y);
+    });
+    context.closePath();
+    context.fillStyle = "rgba(21, 21, 21, .15)";
+    context.strokeStyle = "#151515";
+    context.lineWidth = 2;
+    context.fill();
+    context.stroke();
+
+    context.fillStyle = "#151515";
+    metrics.forEach((metric, index) => {
+      const point = pointAt(index, radius * metric.value / 100);
+      context.beginPath();
+      context.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
+      context.fill();
+    });
+
+    context.font = '600 14px Inter, "PingFang SC", sans-serif';
+    context.textBaseline = "middle";
+    metrics.forEach((metric, index) => {
+      const labelPoint = pointAt(index, 126);
+      context.textAlign = Math.abs(labelPoint.x - center) < 10 ? "center" : labelPoint.x < center ? "right" : "left";
+      context.fillText(metric.label, labelPoint.x, labelPoint.y);
+    });
+  }, [metrics]);
+
+  return <canvas ref={canvasRef} role="img" aria-label={`五维雷达图：${metrics.map((metric) => `${metric.label} ${metric.value} 分`).join("，")}`} />;
+}
+
+function ResultModal({ completed, onBack, onAssets }) {
+  const metrics = completed ? completedSimulationMetrics : incompleteSimulationMetrics;
+  const totalScore = completed ? 84 : 68;
   return (
-    <main className="training-page">
-      <header className="training-header"><button aria-label="关闭训练" onClick={onExit}><X /></button><div><strong>{sceneTitle}</strong><span>从语言到真实表达</span></div><button className="quiet-button" onClick={onExit}>退出训练</button></header>
-      <div className="stepper">{[["learn", "1", "学", "词语"], ["read", "2", "读", "句子"], ["speak", "3", "说", "模拟"]].map(([id, number, label, note]) => <div key={id} className={cx("stepper__item", step === id && "is-active", ["read", "speak"].indexOf(step) > ["read", "speak"].indexOf(id) && "is-done")}><span>{step === id ? number : (id === "learn" && step !== "learn") || (id === "read" && step === "speak") ? <Check /> : number}</span><strong>{label}</strong><small>{note}</small></div>)}</div>
-      {step === "learn" && <section className="training-workspace"><aside className="lesson-list"><div><span>本组语言</span><small>{itemIndex + 1} / {learningItems.length}</small></div>{learningItems.map((learningItem, index) => <button key={learningItem.en} className={cx(index === itemIndex && "is-active")} onClick={() => setItemIndex(index)}><small>{learningItem.type}</small><strong>{learningItem.en}</strong><span>{index + 1}</span></button>)}</aside><article className="learn-stage"><small>{item.type}</small><h1>{item.en}</h1><div className="pronunciation"><span>/ˌrekəˈmend/</span><AudioToggle compact label={`${item.en} 的发音`} /></div><p>{item.zh}</p><div className="stage-footer"><Button variant="secondary" disabled={itemIndex === 0} onClick={() => setItemIndex(itemIndex - 1)}>上一个</Button><Button onClick={nextLearn} icon={<ArrowRight />}>{itemIndex === learningItems.length - 1 ? "进入朗读" : "下一个"}</Button></div></article></section>}
-      {step === "read" && <section className="training-workspace"><aside className="lesson-list"><div><span>完整表达</span><small>{itemIndex + 1} / {learningItems.length}</small></div>{learningItems.map((learningItem, index) => <button key={learningItem.en} className={cx(index === itemIndex && "is-active")} onClick={() => { setItemIndex(index); setScore(null); }}><small>句子</small><strong>{learningItem.en}</strong><span>{index + 1}</span></button>)}</aside><article className="read-stage"><div className="demo-audio"><AudioToggle compact label="标准示范" /><span>听标准示范</span></div><h1>{item.en}</h1><p>{item.zh}</p><div className="rhythm"><span>节奏重点</span><strong>{item.en.split(" ").slice(0, 4).join(" · ")}</strong></div><button className="record-button" aria-label="开始朗读" onClick={submitRead}><Microphone weight="fill" /></button><h3>{score === null ? "轮到你说" : score >= 70 ? "朗读通过" : "再试一次"}</h3><p>{score === null ? "尽量完整、连贯地说出整句话。" : `综合评分 ${score} 分 · ${score >= 70 ? "表达清楚，可以继续" : "达到 70 分后进入下一项"}`}</p>{score !== null && <div className="read-actions"><Button variant="secondary" onClick={() => setScore(null)}>再听一次标准示范</Button>{score >= 70 && <Button onClick={nextRead} icon={<ArrowRight />}>{itemIndex === learningItems.length - 1 ? "进入模拟" : "下一句"}</Button>}</div>}</article></section>}
-      {step === "speak" && <section className="simulation"><div className="simulation__top"><div className="mini-teacher"><img src={teacher.image} alt={teacher.name} /><span><strong>{teacher.name}</strong><small>正在扮演咖啡店店员</small></span></div><span>模拟进行中 · 03:42</span></div><div className="simulation__chat"><div className="sim-line"><small>店员</small><p>Hi! What can I get started for you today?</p></div><div className="sim-line is-user"><small>你</small><p>Could you recommend something less sweet?</p></div>{speakingLines >= 3 && <div className="sim-line"><small>店员</small><p>Sure — how about a medium oat milk latte?</p></div>}{speakingLines >= 4 && <div className="sim-line is-user"><small>你</small><p>That sounds great. I’ll have that, thank you.</p></div>}</div><div className="simulation__prompt"><button className="record-button" aria-label="继续回应" onClick={() => setSpeakingLines(Math.min(4, speakingLines + 1))}><Microphone weight="fill" /></button><strong>{speakingLines >= 4 ? "任务已完成" : "继续回应"}</strong><small>模拟过程中不会打断纠错</small><div><Button variant="secondary">需要提示</Button><Button onClick={() => onComplete(speakingLines >= 4)}>{speakingLines >= 4 ? "完成模拟" : "提前结束"}</Button></div></div></section>}
-    </main>
+    <Modal wide dismissible={false} className="result-modal">
+      <header className="result-modal__header">
+        <div><p className="eyebrow">SIMULATION COMPLETE</p><h2>{completed ? "模拟完成" : "本次模拟已结束"}</h2><p className="result-modal__lead">{completed ? "你顺利完成了本次模拟，五个维度的表现如下。" : "本次对话已保存，下面是截至结束时的五维表现。"}</p></div>
+        <div className="result-modal__score"><strong>{totalScore}</strong><span>/100</span></div>
+      </header>
+      <section className="result-modal__overview">
+        <div className="result-radar"><RadarChart metrics={metrics} /></div>
+        <ul className="result-metrics">{metrics.map((metric) => <li key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong></li>)}</ul>
+      </section>
+      <div className="result-modal__actions"><ExpandingCta direction="back" className="result-action result-action--light" onClick={onBack}>返回场景广场</ExpandingCta><ExpandingCta className="result-action result-action--dark" onClick={onAssets}>查看学习资产</ExpandingCta></div>
+    </Modal>
   );
 }
 
-function Result({ completed, onBack, onAssets }) {
+const readFocusWords = ["recommend", "trying", "oat", "recommend"];
+
+function HighlightedReadSentence({ sentence, focus }) {
+  const start = sentence.toLowerCase().indexOf(focus.toLowerCase());
+  if (start < 0) return sentence;
+  return <>{sentence.slice(0, start)}<mark>{sentence.slice(start, start + focus.length)}</mark>{sentence.slice(start + focus.length)}</>;
+}
+
+function ReadScoreModal({ feedback, onClose }) {
+  const feedbackItem = learningItems[feedback.index];
   return (
-    <main className="page result-page"><PageHeader eyebrow="SIMULATION COMPLETE" title={completed ? "模拟完成，来看看这次的表现" : "本次模拟已提前结束"} subtitle={completed ? "你顺利完成了点单、偏好说明与确认。下一次重点让连接词更自然。" : "记录已保存为未完成，你可以之后直接复练模拟对话。"} action={<div className="result-score"><strong>{completed ? "84" : "—"}</strong><span>/100</span></div>} />
-      {completed ? <><section className="score-overview"><div className="score-radar"><div className="radar-placeholder"><ChartBar weight="thin" /><strong>五维表现</strong></div><ul><li>发音清晰度 <strong>84</strong></li><li>流利度 <strong>78</strong></li><li>表达完整度 <strong>91</strong></li><li>互动回应 <strong>86</strong></li><li>自然度 <strong>80</strong></li></ul></div><div className="score-detail"><p className="eyebrow">KEY FEEDBACK</p><h2>表达完整，互动自然</h2><p>你能主动确认饮品信息，也清楚说明了甜度与奶类偏好。</p><article><strong>表达问题</strong><p><del>I feel like to try something different.</del></p><p>I feel like <b>trying</b> something different.</p><small>feel like 后面应接动名词。</small></article><article><strong>更地道的说法</strong><p>I’d love to try something new today.</p></article><article><strong>发音建议</strong><p>trying 中的 tr 音要饱满紧凑，ing 弱读更自然。</p></article></div></section></> : <section className="empty-result"><Clock /><h2>已保存为未完成</h2><p>学习内容不会改变，下次复练将直接进入“说”的环节。</p></section>}
-      <div className="page-actions"><Button variant="secondary" onClick={onBack}>返回场景广场</Button><Button onClick={onAssets} icon={<ArrowRight />}>查看学习资产</Button></div>
+    <Modal dismissible={false} className="read-score-modal">
+      <div className="read-score-modal__score"><strong>{feedback.score}</strong><span>/100</span></div>
+      <h2>本句发音评估</h2>
+      <p className="read-score-modal__lead">{feedback.score >= 70 ? "整体清晰，再留意标记部分的重音与连读。" : "再留意标记部分的重音与连读，然后重新朗读。"}</p>
+      <div className="read-score-modal__focus"><small>发音定位</small><p><HighlightedReadSentence sentence={feedbackItem.en} focus={readFocusWords[feedback.index]} /></p></div>
+      <button type="button" className="read-score-modal__confirm" onClick={onClose}>知道了</button>
+    </Modal>
+  );
+}
+
+function Training({ sceneTitle, teacher, initialStep = "learn", result, onExit, onComplete, onBack, onAssets }) {
+  const steps = [
+    { id: "learn", label: "学" },
+    { id: "read", label: "读" },
+    { id: "speak", label: "说" },
+  ];
+  const initialStepIndex = Math.max(0, steps.findIndex((item) => item.id === initialStep));
+  const [step, setStep] = useState(initialStep);
+  const [unlockedStepIndex, setUnlockedStepIndex] = useState(initialStepIndex);
+  const [completedSteps, setCompletedSteps] = useState(() => steps.slice(0, initialStepIndex).map((item) => item.id));
+  const [learnIndex, setLearnIndex] = useState(0);
+  const [readIndex, setReadIndex] = useState(0);
+  const [learnedItems, setLearnedItems] = useState([]);
+  const [readScores, setReadScores] = useState({});
+  const [heardReadDemos, setHeardReadDemos] = useState([]);
+  const [readFeedback, setReadFeedback] = useState(null);
+  const [speakingLines, setSpeakingLines] = useState(2);
+  const [simulationPaused, setSimulationPaused] = useState(false);
+  const itemIndex = step === "read" ? readIndex : learnIndex;
+  const item = learningItems[itemIndex];
+  const score = readScores[readIndex] ?? null;
+  const completeStep = (id) => setCompletedSteps((current) => current.includes(id) ? current : [...current, id]);
+  const goToStep = (id) => {
+    const targetIndex = steps.findIndex((item) => item.id === id);
+    if (targetIndex <= unlockedStepIndex) setStep(id);
+  };
+  const nextLearn = () => {
+    setLearnedItems((current) => current.includes(learnIndex) ? current : [...current, learnIndex]);
+    if (learnIndex < learningItems.length - 1) setLearnIndex(learnIndex + 1);
+    else {
+      completeStep("learn");
+      setUnlockedStepIndex((current) => Math.max(current, 1));
+      setStep("read");
+    }
+  };
+  const submitRead = () => {
+    const nextScore = readIndex === 1 && score === null ? 68 : 86;
+    setReadScores((current) => ({ ...current, [readIndex]: nextScore }));
+    setReadFeedback({ index: readIndex, score: nextScore });
+  };
+  const playReadDemo = () => {
+    setHeardReadDemos((current) => current.includes(readIndex) ? current : [...current, readIndex]);
+  };
+  const nextRead = () => {
+    if ((readScores[readIndex] ?? 0) < 70) return;
+    if (readIndex < learningItems.length - 1) setReadIndex(readIndex + 1);
+    else {
+      completeStep("read");
+      setUnlockedStepIndex((current) => Math.max(current, 2));
+      setStep("speak");
+    }
+  };
+  return (
+    <main className="training-page">
+      <header className="training-header"><div><strong>{sceneTitle}</strong><span>从语言到真实表达</span></div><button className="training-exit" aria-label="关闭训练" onClick={onExit}><span><X weight="bold" /></span></button></header>
+      <nav className="stepper" aria-label="练习进度">
+        <span className="stepper__track" aria-hidden="true"><span style={{ width: `${unlockedStepIndex * 50}%` }} /></span>
+        {steps.map((stepItem, index) => {
+          const done = completedSteps.includes(stepItem.id);
+          return <button key={stepItem.id} className={cx("stepper__item", step === stepItem.id && "is-active", done && "is-done")} disabled={index > unlockedStepIndex} onClick={() => goToStep(stepItem.id)}><span className="stepper__check">{done ? <Check weight="bold" /> : index + 1}</span><span className="stepper__copy"><strong>{stepItem.label}</strong></span></button>;
+        })}
+      </nav>
+      {step === "learn" && <section className="training-workspace"><aside className="lesson-list"><div><span>本组语言</span><small>{learnIndex + 1} / {learningItems.length}</small></div>{learningItems.map((learningItem, index) => <button key={learningItem.en} className={cx(index === learnIndex && "is-active", learnedItems.includes(index) && "is-done")} onClick={() => setLearnIndex(index)}><small>{learningItem.type}</small><strong>{learningItem.en}</strong><span>{learnedItems.includes(index) ? <Check weight="bold" /> : index + 1}</span></button>)}</aside><article className="learn-stage"><small>{item.type}</small><h1>{item.en}</h1><div className="pronunciation"><span>/ˌrekəˈmend/</span><AudioToggle mini label={`${item.en} 的发音`} /></div><p>{item.zh}</p><div className="stage-footer"><ExpandingCta direction="back" disabled={learnIndex === 0} onClick={() => setLearnIndex(learnIndex - 1)}>上一个</ExpandingCta><ExpandingCta onClick={nextLearn}>{learnIndex === learningItems.length - 1 ? "进入朗读" : "下一个"}</ExpandingCta></div></article></section>}
+      {step === "read" && <section className="training-workspace"><aside className="lesson-list"><div><span>完整表达</span><small>{readIndex + 1} / {learningItems.length}</small></div>{learningItems.map((learningItem, index) => <button key={learningItem.en} className={cx(index === readIndex && "is-active", (readScores[index] ?? 0) >= 70 && "is-done")} onClick={() => setReadIndex(index)}><small>句子</small><strong>{learningItem.en}</strong><span>{(readScores[index] ?? 0) >= 70 ? <Check weight="bold" /> : index + 1}</span></button>)}</aside><article className="read-stage"><h1>{item.en}</h1><p>{item.zh}</p><div className="rhythm"><span>节奏重点</span><strong>{item.en.split(" ").slice(0, 4).join(" · ")}</strong></div><MicrophoneToggle label="朗读麦克风" onActivate={submitRead} /><h3>{score === null ? "轮到你说" : score >= 70 ? "朗读通过" : "再试一次"}</h3>{score === null && <p>尽量完整、连贯地说出整句话。</p>}<button type="button" className="read-replay" onClick={playReadDemo}><SpeakerHigh weight="fill" />{heardReadDemos.includes(readIndex) ? "再听一次标准示范" : "听标准示范"}</button>{score >= 70 && <div className="stage-footer read-stage-footer"><span /><ExpandingCta onClick={nextRead}>{readIndex === learningItems.length - 1 ? "进入模拟" : "下一句"}</ExpandingCta></div>}</article></section>}
+      {step === "speak" && <section className="simulation call call--subtitles"><section className="call__stage"><div className="call-presence call-presence--avatarless"><div className="listening-state listening-state--compact"><VoiceWaveform active={!simulationPaused && !result} compact /><CallTimer paused={simulationPaused} /></div></div><div className="transcript simulation__transcript" tabIndex="0" aria-label="模拟对话字幕，可滚动查看历史内容"><article className="transcript__line"><small>店员</small><p>Hi! What can I get started for you today?</p></article><article className="transcript__line is-user"><small>你</small><p>Could you recommend something less sweet?</p></article>{speakingLines >= 3 && <article className="transcript__line"><small>店员</small><p>Sure — how about a medium oat milk latte?</p></article>}{speakingLines >= 4 && <article className="transcript__line is-user"><small>你</small><p>That sounds great. I’ll have that, thank you.</p></article>}</div></section><CallControls paused={simulationPaused} onToggleMicrophone={() => { setSimulationPaused((current) => !current); setSpeakingLines((current) => Math.min(4, current + 1)); }} onEnd={() => onComplete(speakingLines >= 4)} showSubtitles={false} /></section>}
+      {result && <ResultModal completed={result.completed} onBack={onBack} onAssets={onAssets} />}
+      {readFeedback && <ReadScoreModal feedback={readFeedback} onClose={() => setReadFeedback(null)} />}
     </main>
   );
 }
@@ -560,32 +981,94 @@ function Paywall({ title, onClose, onMembership }) {
   return <Modal onClose={onClose}><div className="paywall-icon"><LockKey /></div><p className="eyebrow">SPECIAL TRAINING</p><h2>开始“{title}”需要特训版</h2><p className="modal-lead">你可以自由查看介绍；只有正式开始训练时才会检查权益。</p><ul className="paywall-list"><li><Check />IELTS 全真模拟与预估分数</li><li><Check />上传 PDF / DOCX 或粘贴面试材料</li><li><Check />雅思与面试共用 5 次/天</li></ul><div className="modal-actions"><Button variant="secondary" onClick={onClose}>稍后再说</Button><Button onClick={onMembership}>查看特训版</Button></div></Modal>;
 }
 
-export function App() {
+const appPages = ["conversation", "scenes", "assets", "profile", "membership", "settings"];
+const pagePaths = {
+  conversation: "/conversation",
+  scenes: "/scenes",
+  assets: "/assets",
+  profile: "/profile",
+  membership: "/membership",
+  settings: "/settings",
+};
+
+function routeFromLocation() {
   const preview = new URLSearchParams(window.location.search).get("preview");
-  const appPages = ["conversation", "scenes", "assets", "profile", "membership", "settings"];
-  const [flow, setFlow] = useState(preview === "teacher" ? "teacher" : appPages.includes(preview) || ["training", "result"].includes(preview) ? "app" : "splash");
-  const [authMode, setAuthMode] = useState("signup");
+  if (preview) {
+    if (preview === "teacher") return { flow: "teacher", page: "conversation", authMode: "signup", training: null, result: null };
+    if (preview === "training") return { flow: "app", page: "scenes", authMode: "signup", training: { initialStep: "learn" }, result: null };
+    if (preview === "result") return { flow: "app", page: "scenes", authMode: "signup", training: { initialStep: "speak" }, result: { completed: true } };
+    if (appPages.includes(preview)) return { flow: "app", page: preview, authMode: "signup", training: null, result: null };
+  }
+
+  const path = window.location.pathname.replace(/\/+$/, "") || "/";
+  if (path === "/login") return { flow: "auth", page: "conversation", authMode: "login", training: null, result: null };
+  if (path === "/signup") return { flow: "auth", page: "conversation", authMode: "signup", training: null, result: null };
+  if (path === "/level") return { flow: "level", page: "conversation", authMode: "signup", training: null, result: null };
+  if (path === "/teacher") return { flow: "teacher", page: "conversation", authMode: "signup", training: null, result: null };
+  if (path === "/training") return { flow: "app", page: "scenes", authMode: "signup", training: { initialStep: "learn" }, result: null };
+  if (path === "/result") return { flow: "app", page: "scenes", authMode: "signup", training: { initialStep: "speak" }, result: { completed: true } };
+
+  const page = Object.entries(pagePaths).find(([, routePath]) => routePath === path)?.[0];
+  if (page) return { flow: "app", page, authMode: "signup", training: null, result: null };
+  return { flow: "splash", page: "conversation", authMode: "signup", training: null, result: null };
+}
+
+export function App() {
+  const initialRoute = useMemo(routeFromLocation, []);
+  const [flow, setFlow] = useState(initialRoute.flow);
+  const [authMode, setAuthMode] = useState(initialRoute.authMode);
   const [level, setLevel] = useState("");
   const [conversationSpeed, setConversationSpeed] = useState("自然");
   const [teacher, setTeacher] = useState(teachers[0]);
-  const [page, setPage] = useState(appPages.includes(preview) ? preview : ["training", "result"].includes(preview) ? "scenes" : "conversation");
+  const [page, setPage] = useState(initialRoute.page);
   const [sceneTitle, setSceneTitle] = useState("咖啡店点单");
-  const [training, setTraining] = useState(preview === "training" ? { initialStep: "learn" } : null);
-  const [result, setResult] = useState(preview === "result" ? { completed: true } : null);
+  const [training, setTraining] = useState(initialRoute.training);
+  const [result, setResult] = useState(initialRoute.result);
   const [paywall, setPaywall] = useState(null);
-  const enterApp = () => setFlow("app");
-  const startTraining = (title, initialStep = "learn") => { setSceneTitle(title); setTraining({ initialStep }); setResult(null); };
-  const setMainPage = (next) => { setTraining(null); setResult(null); setPage(next); };
-  if (flow === "splash") return <Splash onStart={() => { setAuthMode("signup"); setFlow("auth"); }} onLogin={() => { setAuthMode("login"); setFlow("auth"); }} />;
-  if (flow === "auth") return <Auth mode={authMode} onBack={() => setFlow("splash")} onSuccess={() => setFlow("level")} />;
-  if (flow === "level") return <LevelSetup selected={level} onSelect={setLevel} onNext={() => setFlow("teacher")} />;
+
+  const applyRoute = (route) => {
+    setFlow(route.flow);
+    setAuthMode(route.authMode);
+    setPage(route.page);
+    setTraining(route.training);
+    setResult(route.result);
+    setPaywall(null);
+  };
+
+  const navigate = (path, route, replace = false) => {
+    if (window.location.pathname !== path || window.location.search) {
+      window.history[replace ? "replaceState" : "pushState"]({}, "", path);
+    }
+    applyRoute(route);
+  };
+
+  useEffect(() => {
+    const handlePopState = () => applyRoute(routeFromLocation());
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  const goSplash = () => navigate("/", { flow: "splash", page: "conversation", authMode: "signup", training: null, result: null });
+  const goAuth = (mode) => navigate(mode === "login" ? "/login" : "/signup", { flow: "auth", page: "conversation", authMode: mode, training: null, result: null });
+  const goLevel = () => navigate("/level", { flow: "level", page: "conversation", authMode: authMode, training: null, result: null });
+  const goTeacher = () => navigate("/teacher", { flow: "teacher", page: "conversation", authMode: authMode, training: null, result: null });
+  const enterApp = () => setMainPage("conversation");
+  const startTraining = (title, initialStep = "learn") => {
+    setSceneTitle(title);
+    navigate("/training", { flow: "app", page: "scenes", authMode, training: { initialStep }, result: null });
+  };
+  const showResult = (completed) => setResult({ completed });
+  const setMainPage = (next) => navigate(pagePaths[next] || "/conversation", { flow: "app", page: next, authMode, training: null, result: null });
+
+  if (flow === "splash") return <Splash onStart={() => goAuth("signup")} onLogin={() => goAuth("login")} />;
+  if (flow === "auth") return <Auth mode={authMode} onBack={goSplash} onSuccess={goLevel} />;
+  if (flow === "level") return <LevelSetup selected={level} onSelect={setLevel} onNext={goTeacher} />;
   if (flow === "teacher") return <TeacherSetup selectedId={teacher.id} onSelect={(id) => setTeacher(teachers.find((item) => item.id === id))} onFinish={enterApp} />;
   let content;
-  if (training) content = <Training sceneTitle={sceneTitle} teacher={teacher} initialStep={training.initialStep} onExit={() => setTraining(null)} onComplete={(completed) => { setTraining(null); setResult({ completed }); }} />;
-  else if (result) content = <Result completed={result.completed} onBack={() => { setResult(null); setPage("scenes"); }} onAssets={() => { setResult(null); setPage("assets"); }} />;
+  if (training) content = <Training sceneTitle={sceneTitle} teacher={teacher} initialStep={training.initialStep} result={result} onExit={() => setMainPage("scenes")} onComplete={showResult} onBack={() => setMainPage("scenes")} onAssets={() => setMainPage("assets")} />;
   else if (page === "conversation") content = <Conversation teacher={teacher} speed={conversationSpeed} level={level} onSettingsChange={(settings) => { setConversationSpeed(settings.speed); setLevel(settings.level); setTeacher(settings.teacher); }} />;
   else if (page === "scenes") content = <Scenes onStartTraining={startTraining} onLocked={setPaywall} />;
   else if (page === "assets") content = <Assets onRepeat={(title) => startTraining(title, "speak")} />;
-  else content = <Profile section={page} setSection={setPage} teacher={teacher} onTeacherChange={setTeacher} onLogout={() => setFlow("splash")} />;
-  return <AppShell page={page} setPage={setMainPage} teacher={teacher}>{content}{paywall && <Paywall title={paywall} onClose={() => setPaywall(null)} onMembership={() => { setPaywall(null); setPage("membership"); }} />}</AppShell>;
+  else content = <Profile section={page} setSection={setMainPage} teacher={teacher} onTeacherChange={setTeacher} onLogout={goSplash} />;
+  return <AppShell page={page} setPage={setMainPage} teacher={teacher}>{content}{paywall && <Paywall title={paywall} onClose={() => setPaywall(null)} onMembership={() => { setPaywall(null); setMainPage("membership"); }} />}</AppShell>;
 }
