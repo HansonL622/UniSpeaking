@@ -23,6 +23,7 @@ import {
   Microphone,
   MicrophoneSlash,
   PaperPlaneTilt,
+  Pause,
   Password,
   PhoneDisconnect,
   Play,
@@ -58,6 +59,9 @@ import {
 } from "lucide-react";
 import { assetRecords, learningItems, levels, plans, recommendations, teachers } from "./data.js";
 import { createRealtimeClient } from "./realtimeClient.js";
+import { IeltsAssets, IeltsTrainingCenter } from "./IeltsModule.jsx";
+import { InterviewAssets, InterviewTrainingCenter } from "./InterviewModule.jsx";
+import { NewtonsCradle } from "./NewtonsCradle.jsx";
 
 const cx = (...parts) => parts.filter(Boolean).join(" ");
 
@@ -83,6 +87,17 @@ function AudioToggle({ label = "播放声音", compact = false, mini = false }) 
       <span className="audio-toggle__speaker"><SpeakerHigh weight="fill" /></span>
       <span className="audio-toggle__muted"><SpeakerSlash weight="fill" /></span>
     </button>
+  );
+}
+
+function ScenePlaybackToggle({ label = "播放发音" }) {
+  const [playing, setPlaying] = useState(false);
+  return (
+    <label className="scene-playback-toggle" title={playing ? "暂停发音" : label}>
+      <input type="checkbox" checked={playing} onChange={(event) => setPlaying(event.target.checked)} />
+      <Play className="play" weight="fill" />
+      <Pause className="pause" weight="fill" />
+    </label>
   );
 }
 
@@ -378,7 +393,7 @@ function TeacherSetup({ selectedId, onSelect, onFinish }) {
       <section className="teacher-detail">
         <span className="teacher-detail__spacer" aria-hidden="true" />
         <div className="teacher-detail__audition"><AudioToggle mini label={`${active.name} 的自我介绍`} /><p>“{active.intro}”</p></div>
-        <ExpandingCta className="teacher-cta" onClick={onFinish}>选择这位老师</ExpandingCta>
+        <ExpandingCta className="teacher-cta teacher-gradient-cta" onClick={onFinish}>选择这位老师</ExpandingCta>
       </section>
     </main>
   );
@@ -391,11 +406,12 @@ function AppShell({ page, setPage, teacher, children }) {
     { id: "scenes", label: "场景广场", icon: SquaresFour },
     { id: "assets", label: "学习资产", icon: BookOpenText },
   ];
+  const activePage = ["ielts", "interview"].includes(page) ? "scenes" : ["ielts-assets", "interview-assets"].includes(page) ? "assets" : page;
   return (
     <div className={cx("app-shell", sidebarOpen && "is-sidebar-open")}>
       <aside className={cx("sidebar", sidebarOpen && "is-open")} onMouseEnter={() => setSidebarOpen(true)} onMouseLeave={() => setSidebarOpen(false)}>
         <Brand compact={!sidebarOpen} />
-        <nav>{items.map(({ id, label, icon: Icon }) => <button key={id} className={cx("sidebar__item", page === id && "is-active")} onClick={() => setPage(id)} aria-label={label} title={label}><Icon weight={page === id ? "bold" : "regular"} /><span className="sidebar__label"><span>{label}</span></span></button>)}</nav>
+        <nav>{items.map(({ id, label, icon: Icon }) => <button key={id} className={cx("sidebar__item", activePage === id && "is-active")} onClick={() => setPage(id)} aria-label={label} title={label}><Icon weight={activePage === id ? "bold" : "regular"} /><span className="sidebar__label"><span>{label}</span></span></button>)}</nav>
         <button className={cx("sidebar__avatar", ["profile", "membership", "settings"].includes(page) && "is-active")} onClick={() => setPage("profile")}><img src={teacher.image} alt="个人中心" /></button>
       </aside>
       <div className="app-main">{children}</div>
@@ -752,7 +768,7 @@ function Conversation({ teacher, speed, level, onSettingsChange }) {
   );
 }
 
-function Scenes({ onStartTraining, onLocked }) {
+function Scenes({ onStartTraining, onLocked, onIelts, onInterview }) {
   const [prompt, setPrompt] = useState("");
   const [preview, setPreview] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -775,7 +791,7 @@ function Scenes({ onStartTraining, onLocked }) {
             <textarea value={prompt} maxLength={200} onChange={(event) => setPrompt(event.target.value)} placeholder="例如：第一次去健身房，咨询设施、开放时间和会员体验" />
             <div className="scene-input__footer">
               <div className="example-chips"><small>快速开始</small>{examples.map((example) => <button key={example} onClick={() => setPrompt(example)}>{example}</button>)}</div>
-              <div className="scene-input__controls"><span>{prompt.length}/200</span><ExpandingCta className={cx("scene-generate", generating && "is-generating")} disabled={!prompt.trim() || generating} onClick={generate}>{generating ? <><span className="scene-generate__dots"><i /><i /><i /></span>正在生成</> : "生成练习场景"}</ExpandingCta></div>
+              <div className="scene-input__controls"><span>{prompt.length}/200</span><ExpandingCta className={cx("scene-generate", generating && "is-generating")} disabled={!prompt.trim() || generating} onClick={generate}>{generating ? <><NewtonsCradle size={22} className="newtons-cradle--inline" label="正在生成练习场景" />正在生成</> : "生成练习场景"}</ExpandingCta></div>
             </div>
           </div>
         </section>
@@ -783,8 +799,8 @@ function Scenes({ onStartTraining, onLocked }) {
         <section className="professional scene-module">
           <div className="scene-section-heading"><div><p className="eyebrow">PRO TRAINING</p><h2>专业特训</h2></div><p>针对考试与职场目标的结构化训练。</p></div>
           <div className="professional-grid">
-            <article><span className="professional__icon professional__icon--ielts"><abbr title="International English Language Testing System">IELTS</abbr></span><span className="professional__copy"><small>权威题库 · 全真模拟</small><strong>IELTS 雅思口语</strong><em>覆盖 Part 1 / 2 / 3，提供维度评分与预估分数</em></span><ExpandingCta className="scene-card-cta" onClick={() => onLocked("IELTS 雅思口语")}>开始练习</ExpandingCta></article>
-            <article><span className="professional__icon"><Briefcase /></span><span className="professional__copy"><small>材料分析 · 结构化准备</small><strong>英文面试</strong><em>上传简历或职位描述，生成针对性模拟面试</em></span><ExpandingCta className="scene-card-cta" onClick={() => onLocked("英文面试")}>开始练习</ExpandingCta></article>
+            <article><span className="professional__icon professional__icon--ielts"><abbr title="International English Language Testing System">IELTS</abbr></span><span className="professional__copy"><strong>IELTS 雅思口语</strong><em>覆盖 Part 1 / 2 / 3 与全真模考，形成完整提分闭环</em></span><ExpandingCta className="scene-card-cta" onClick={onIelts}>开始练习</ExpandingCta></article>
+            <article><span className="professional__icon"><Briefcase /></span><span className="professional__copy"><strong>英文模拟面试</strong><em>上传简历与岗位 JD，完成实时面试并获得口语训练报告</em></span><ExpandingCta className="scene-card-cta" onClick={onInterview}>开始练习</ExpandingCta></article>
           </div>
         </section>
 
@@ -1040,7 +1056,7 @@ const assetConversation = [
   },
 ];
 
-function AssetModuleMenu({ onSelect }) {
+function AssetModuleMenu({ onSelect, onIelts, onInterview }) {
   return (
     <div className="asset-module-menu">
       <button className="asset-module-menu__trigger" type="button" aria-label="切换学习资产模块" aria-haspopup="menu">
@@ -1049,8 +1065,8 @@ function AssetModuleMenu({ onSelect }) {
         <CaretDown weight="bold" />
       </button>
       <div className="asset-module-menu__popover" role="menu">
-        <button type="button" role="menuitem" onClick={() => onSelect("IELTS")}><BookOpenText /><span><strong>IELTS 学习资产</strong><small>独立学习路径</small></span><CaretRight /></button>
-        <button type="button" role="menuitem" onClick={() => onSelect("英文面试")}><Briefcase /><span><strong>英文面试学习资产</strong><small>独立学习路径</small></span><CaretRight /></button>
+        <button type="button" role="menuitem" onClick={onIelts}><BookOpenText /><span><strong>IELTS 学习资产</strong><small>评分、建议与今日复习</small></span><CaretRight /></button>
+        <button type="button" role="menuitem" onClick={onInterview}><Briefcase /><span><strong>英文面试学习资产</strong><small>历史报告与口语复盘</small></span><CaretRight /></button>
       </div>
     </div>
   );
@@ -1120,7 +1136,7 @@ function AssetModulePlaceholder({ module, onBack }) {
   );
 }
 
-function Assets({ onPractice, onRestart, initialView = "home", initialRecordTitle }) {
+function Assets({ onPractice, onRestart, onIelts, onInterview, initialView = "home", initialRecordTitle }) {
   const sceneRecords = assetRecords.filter((record) => record.category === "普通场景");
   const initialRecord = sceneRecords.find((record) => record.title === initialRecordTitle) || sceneRecords[0];
   const [selected, setSelected] = useState(initialRecord);
@@ -1142,11 +1158,11 @@ function Assets({ onPractice, onRestart, initialView = "home", initialRecordTitl
 
   return (
     <main className="page assets-page">
-      <PageHeader title="学习资产" subtitle="把场景练习中真正用过的表达，留在这里继续复习。" action={<AssetModuleMenu onSelect={setReservedModule} />} />
+      <PageHeader title="学习资产" subtitle="把场景练习中真正用过的表达，留在这里继续复习。" action={<AssetModuleMenu onSelect={setReservedModule} onIelts={onIelts} onInterview={onInterview} />} />
       <section className="asset-layout">
-        <aside className="asset-list" aria-label="场景训练历史">
-          <div className="asset-list__heading"><div><span>场景训练</span><small>{records.length} 条学习记录</small></div><BookOpenText /></div>
-          {records.map((record) => <button key={record.id} className={selected.id === record.id ? "is-active" : ""} onClick={() => setSelected(record)}><span><small>{record.date} · {record.category}</small><strong>{record.title}</strong><em>{record.items} 个语言资产</em></span><span className="asset-status">{record.status}{record.score && ` · ${record.score}`}</span></button>)}
+        <aside className="asset-list asset-list--history" aria-label="场景训练历史">
+          <div className="asset-list__heading"><strong>训练记录</strong><span>{records.length} 条</span></div>
+          {records.map((record) => <button key={record.id} className={selected.id === record.id ? "is-active" : ""} onClick={() => setSelected(record)}><small>{record.date} · {record.category}</small><strong>{record.title}</strong><em>{record.items} 个语言资产 · {record.status}{record.score && ` · ${record.score}`}</em></button>)}
           {!records.length && <div className="asset-list__empty">暂无场景学习资产</div>}
         </aside>
         <article className="asset-detail">
@@ -1155,7 +1171,7 @@ function Assets({ onPractice, onRestart, initialView = "home", initialRecordTitl
             <div className="asset-detail__actions"><AnimatedDeleteButton onClick={() => setDeleteOpen(true)} /><ExpandingCta className="teacher-cta asset-open-button" onClick={() => setView("detail")}>打开当前学习资产</ExpandingCta></div>
           </header>
           <div className="asset-items" aria-label="已保存的单词、短语和句子">
-            {learningItems.map((item) => <div key={item.en}><span className="tag">{item.type}</span><p><strong>{item.en}</strong><small>{item.zh}</small></p><AudioToggle compact label={`${item.en} 的发音`} /></div>)}
+            {learningItems.map((item) => <div key={item.en}><span className="tag">{item.type}</span><p><strong>{item.en}</strong><small>{item.zh}</small></p><ScenePlaybackToggle label={`播放 ${item.en} 的发音`} /></div>)}
           </div>
         </article>
       </section>
@@ -1289,7 +1305,7 @@ function Paywall({ title, onClose, onMembership }) {
   return <Modal onClose={onClose}><div className="paywall-icon"><LockKey /></div><p className="eyebrow">SPECIAL TRAINING</p><h2>开始“{title}”需要特训版</h2><p className="modal-lead">你可以自由查看介绍；只有正式开始训练时才会检查权益。</p><ul className="paywall-list"><li><Check />IELTS 全真模拟与预估分数</li><li><Check />上传 PDF / DOCX 或粘贴面试材料</li><li><Check />雅思与面试共用 5 次/天</li></ul><div className="modal-actions"><Button variant="secondary" onClick={onClose}>稍后再说</Button><Button onClick={onMembership}>查看特训版</Button></div></Modal>;
 }
 
-const appPages = ["conversation", "scenes", "assets", "profile", "membership", "settings"];
+const appPages = ["conversation", "scenes", "assets", "ielts", "ielts-assets", "interview", "interview-assets", "profile", "membership", "settings"];
 const pagePaths = {
   conversation: "/conversation",
   scenes: "/scenes",
@@ -1297,7 +1313,47 @@ const pagePaths = {
   profile: "/profile",
   membership: "/membership",
   settings: "/settings",
+  ielts: "/ielts",
+  "ielts-assets": "/ielts/assets",
+  interview: "/interview",
+  "interview-assets": "/interview/assets",
 };
+
+const ieltsPartBySegment = { part1: "p1", part2: "p2", part3: "p3", mock: "mock" };
+
+function ieltsRouteFromPath(path) {
+  const segments = path.split("/").filter(Boolean);
+  if (segments[0] !== "ielts") return null;
+  if (segments.length === 1) return { page: "ielts", route: { area: "training", screen: "home" } };
+  if (segments[1] === "assets") {
+    const tab = ["review", "history", "trends"].includes(segments[2]) ? segments[2] : "overview";
+    return { page: "ielts-assets", route: { area: "assets", tab } };
+  }
+  const part = ieltsPartBySegment[segments[1]];
+  if (!part) return null;
+  if (part === "mock") {
+    const screen = ["setup", "session", "analysis", "report"].includes(segments[2]) ? segments[2] : "setup";
+    return { page: "ielts", route: { area: "training", part, screen, selection: "random" } };
+  }
+  if (segments.length === 2) return { page: "ielts", route: { area: "training", part, screen: "topics" } };
+  const selection = segments[2];
+  const screen = ["setup", "session", "analysis", "report"].includes(segments[3]) ? segments[3] : "setup";
+  return { page: "ielts", route: { area: "training", part, screen, selection } };
+}
+
+function interviewRouteFromPath(path) {
+  const segments = path.split("/").filter(Boolean);
+  if (segments[0] !== "interview") return null;
+  if (segments[1] === "assets") {
+    if (segments[2] && segments[2] !== "history") return { page: "interview-assets", route: { area: "assets", record: segments[2] } };
+    return { page: "interview-assets", route: { area: "assets", tab: segments[2] === "history" ? "history" : "overview" } };
+  }
+  if (segments[1] === "report" && segments[2] === "transcript") return { page: "interview", route: { area: "training", screen: "transcript" } };
+  if (segments[1] === "report" && segments[2] === "partial") return { page: "interview", route: { area: "training", screen: "report", result: "partial" } };
+  if (segments[1] === "report" && segments[2] === "failed") return { page: "interview", route: { area: "training", screen: "report-failed" } };
+  const screens = ["preparing", "live", "finalizing", "report", "error", "report-failed"];
+  return { page: "interview", route: { area: "training", screen: screens.includes(segments[1]) ? segments[1] : "input" } };
+}
 
 function routeFromLocation() {
   const preview = new URLSearchParams(window.location.search).get("preview");
@@ -1316,6 +1372,12 @@ function routeFromLocation() {
   if (path === "/training") return { flow: "app", page: "scenes", authMode: "signup", training: { initialStep: "learn" }, result: null };
   if (path === "/result") return { flow: "app", page: "scenes", authMode: "signup", training: { initialStep: "speak" }, result: { completed: true } };
 
+  if (path === "/ielts-assets") return { flow: "app", page: "ielts-assets", authMode: "signup", training: null, result: null, ieltsRoute: { area: "assets", tab: "overview" } };
+  const ieltsLocation = ieltsRouteFromPath(path);
+  if (ieltsLocation) return { flow: "app", page: ieltsLocation.page, authMode: "signup", training: null, result: null, ieltsRoute: ieltsLocation.route };
+  const interviewLocation = interviewRouteFromPath(path);
+  if (interviewLocation) return { flow: "app", page: interviewLocation.page, authMode: "signup", training: null, result: null, interviewRoute: interviewLocation.route };
+
   const page = Object.entries(pagePaths).find(([, routePath]) => routePath === path)?.[0];
   if (page) return { flow: "app", page, authMode: "signup", training: null, result: null };
   return { flow: "splash", page: "conversation", authMode: "signup", training: null, result: null };
@@ -1332,6 +1394,8 @@ export function App() {
   const [sceneTitle, setSceneTitle] = useState("咖啡店点单");
   const [training, setTraining] = useState(initialRoute.training);
   const [result, setResult] = useState(initialRoute.result);
+  const [ieltsRoute, setIeltsRoute] = useState(initialRoute.ieltsRoute || null);
+  const [interviewRoute, setInterviewRoute] = useState(initialRoute.interviewRoute || null);
   const [paywall, setPaywall] = useState(null);
 
   const applyRoute = (route) => {
@@ -1340,6 +1404,8 @@ export function App() {
     setPage(route.page);
     setTraining(route.training);
     setResult(route.result);
+    setIeltsRoute(route.ieltsRoute || null);
+    setInterviewRoute(route.interviewRoute || null);
     setPaywall(null);
   };
 
@@ -1367,6 +1433,14 @@ export function App() {
   };
   const showResult = (completed) => setResult({ completed });
   const setMainPage = (next) => navigate(pagePaths[next] || "/conversation", { flow: "app", page: next, authMode, training: null, result: null });
+  const navigateIelts = (path) => {
+    if (window.location.pathname !== path || window.location.search) window.history.pushState({}, "", path);
+    applyRoute(routeFromLocation());
+  };
+  const navigateInterview = (path) => {
+    if (window.location.pathname !== path || window.location.search) window.history.pushState({}, "", path);
+    applyRoute(routeFromLocation());
+  };
   const openCompletedAssetDetail = () => navigate("/assets?view=detail", { flow: "app", page: "assets", authMode, training: null, result: null });
 
   if (flow === "splash") return <Splash onStart={() => goAuth("signup")} onLogin={() => goAuth("login")} />;
@@ -1376,8 +1450,12 @@ export function App() {
   let content;
   if (training) content = <Training sceneTitle={sceneTitle} teacher={teacher} initialStep={training.initialStep} standaloneSpeak={training.standaloneSpeak} result={result} onExit={() => setMainPage(training.returnPage || "scenes")} onComplete={showResult} onBack={() => setMainPage(training.returnPage || "scenes")} onAssets={openCompletedAssetDetail} />;
   else if (page === "conversation") content = <Conversation teacher={teacher} speed={conversationSpeed} level={level} onSettingsChange={(settings) => { setConversationSpeed(settings.speed); setLevel(settings.level); setTeacher(settings.teacher); }} />;
-  else if (page === "scenes") content = <Scenes onStartTraining={startTraining} onLocked={setPaywall} />;
-  else if (page === "assets") content = <Assets initialView={new URLSearchParams(window.location.search).get("view") === "detail" ? "detail" : "home"} initialRecordTitle={sceneTitle} onPractice={(title) => startTraining(title, "speak", { standaloneSpeak: true, returnPage: "assets" })} onRestart={(title) => startTraining(title, "learn", { returnPage: "assets" })} />;
+  else if (page === "scenes") content = <Scenes onStartTraining={startTraining} onLocked={setPaywall} onIelts={() => setMainPage("ielts")} onInterview={() => setMainPage("interview")} />;
+  else if (page === "assets") content = <Assets initialView={new URLSearchParams(window.location.search).get("view") === "detail" ? "detail" : "home"} initialRecordTitle={sceneTitle} onIelts={() => setMainPage("ielts-assets")} onInterview={() => setMainPage("interview-assets")} onPractice={(title) => startTraining(title, "speak", { standaloneSpeak: true, returnPage: "assets" })} onRestart={(title) => startTraining(title, "learn", { returnPage: "assets" })} />;
+  else if (page === "ielts") content = <IeltsTrainingCenter route={ieltsRoute} onNavigate={navigateIelts} onExit={() => setMainPage("scenes")} onAssets={() => navigateIelts("/ielts/assets")} />;
+  else if (page === "ielts-assets") content = <IeltsAssets route={ieltsRoute} onNavigate={navigateIelts} onBackToAssets={() => setMainPage("assets")} onInterviewAssets={() => setMainPage("interview-assets")} onTraining={() => navigateIelts("/ielts")} />;
+  else if (page === "interview") content = <InterviewTrainingCenter route={interviewRoute} onNavigate={navigateInterview} onExit={() => setMainPage("scenes")} onAssets={() => navigateInterview("/interview/assets")} />;
+  else if (page === "interview-assets") content = <InterviewAssets route={interviewRoute} onNavigate={navigateInterview} onBackToAssets={() => setMainPage("assets")} onTraining={() => navigateInterview("/interview")} />;
   else content = <Profile section={page} setSection={setMainPage} teacher={teacher} speed={conversationSpeed} level={level} onSettingsChange={(settings) => { setConversationSpeed(settings.speed); setLevel(settings.level); setTeacher(settings.teacher); }} onLogout={goSplash} />;
   return <AppShell page={page} setPage={setMainPage} teacher={teacher}>{content}{paywall && <Paywall title={paywall} onClose={() => setPaywall(null)} onMembership={() => { setPaywall(null); setMainPage("membership"); }} />}</AppShell>;
 }
